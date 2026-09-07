@@ -4,3 +4,5 @@ No savings percentage ships with project. Measure representative tasks against f
 
 Calibrate suitability separately from economics. Split evaluation data from tuning data. Report distributions and failure cases, not only averages. Treat self-reported model success as insufficient. Never run live benchmark suite by default or in public CI.
 
+Versioned suite, result schema, offline command, live runner protocol, privacy rules, and calibration
+interpretation are documented in [Benchmark and calibration protocol](BENCHMARK_PROTOCOL.md).

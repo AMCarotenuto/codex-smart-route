@@ -1,0 +1,80 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "codex-smart-route-public",
+  "suite_version": "1.0.0",
+  "description": "Small public tasks for routing comparisons; expected values are fixtures, not hidden evaluation data.",
+  "tasks": [
+    {
+      "id": "mechanical-sort-en",
+      "class": "mechanical_edit",
+      "language": "en",
+      "prompt": "Sort the supplied lines alphabetically and return only the resulting text.",
+      "fixtures": {"lines.txt": "beta\nalpha\n"},
+      "requirements": {"modalities": ["text"], "tools": false},
+      "acceptance": {"operator": "equals", "expected": "alpha\nbeta"}
+    },
+    {
+      "id": "implementation-sum-it",
+      "class": "standard_implementation",
+      "language": "it",
+      "prompt": "Implementa una somma degli interi forniti. Restituisci JSON con la chiave result.",
+      "fixtures": {"values.json": [2, -1, 4]},
+      "requirements": {"modalities": ["text"], "tools": false},
+      "acceptance": {"operator": "json_subset", "expected": {"result": 5}}
+    },
+    {
+      "id": "refactor-modules-en",
+      "class": "multi_file_refactor",
+      "language": "en",
+      "prompt": "Plan a behavior-preserving split of parser and renderer modules. Return JSON with ordered modules.",
+      "fixtures": {"module.py": "def parse(x): return x\ndef render(x): return str(x)\n"},
+      "requirements": {"modalities": ["text"], "tools": true},
+      "acceptance": {"operator": "json_subset", "expected": {"modules": ["parser", "renderer"]}}
+    },
+    {
+      "id": "debug-boundary-it",
+      "class": "debugging_investigation",
+      "language": "it",
+      "prompt": "Individua la condizione corretta per evitare accesso oltre lista. Restituisci solo la condizione.",
+      "fixtures": {"bug.py": "if index <= len(items): return items[index]\n"},
+      "requirements": {"modalities": ["text"], "tools": false},
+      "acceptance": {"operator": "equals", "expected": "index < len(items)"}
+    },
+    {
+      "id": "architecture-queue-en",
+      "class": "architecture_reasoning",
+      "language": "en",
+      "prompt": "Name both required properties for a retrying worker that must avoid duplicate effects.",
+      "fixtures": {"constraints.json": {"delivery": "at-least-once", "effects": "external"}},
+      "requirements": {"modalities": ["text"], "tools": false},
+      "acceptance": {"operator": "contains_all", "expected": ["idempotency", "durability"]}
+    },
+    {
+      "id": "tool-project-it",
+      "class": "tool_heavy",
+      "language": "it",
+      "prompt": "Leggi i metadati pubblici forniti e restituisci solo il nome progetto.",
+      "fixtures": {"pyproject.toml": "[project]\nname = \"codex-smart-route\"\n"},
+      "requirements": {"modalities": ["text"], "tools": true},
+      "acceptance": {"operator": "equals", "expected": "codex-smart-route"}
+    },
+    {
+      "id": "image-shape-en",
+      "class": "image_capable",
+      "language": "en",
+      "prompt": "When image input is supported, identify its colored shape. Return only color-shape.",
+      "fixtures": {"image.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\"><circle cx=\"16\" cy=\"16\" r=\"12\" fill=\"blue\"/></svg>"},
+      "requirements": {"modalities": ["text", "image"], "tools": false, "optional_capability": "image"},
+      "acceptance": {"operator": "equals", "expected": "blue-circle"}
+    },
+    {
+      "id": "reasoning-order-it",
+      "class": "architecture_reasoning",
+      "language": "it",
+      "prompt": "Ordina i passaggi di migrazione sicura. Restituisci JSON con steps.",
+      "fixtures": {"steps": ["remove-old", "dual-write", "backfill", "switch-read"]},
+      "requirements": {"modalities": ["text"], "tools": false},
+      "acceptance": {"operator": "json_subset", "expected": {"steps": ["dual-write", "backfill", "switch-read", "remove-old"]}}
+    }
+  ]
+}
