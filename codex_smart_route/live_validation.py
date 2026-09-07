@@ -333,7 +333,10 @@ def _selected(service: RoutingService, context: TaskContext) -> Decision:
 
 
 def _cli_command(executable: str, decision: Decision, task: str, cwd: Path) -> list[str]:
-    return CodexCliAdapter(executable).command(
+    # Harness owns this fixed safe option set. Runtime execution remains the authoritative
+    # compatibility check; offline fake-runner tests must not require Codex to be installed.
+    supported = frozenset({"--json", "--ephemeral", "--sandbox", "--color"})
+    return CodexCliAdapter(executable, supported_options=supported).command(
         decision,
         task,
         cwd,
