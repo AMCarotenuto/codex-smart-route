@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import platform
+from dataclasses import replace
 from pathlib import Path
 
+from . import __version__
 from .audit import AuditLogger
 from .config import RouterConfig, default_home
 from .discovery import apply_overrides, capabilities_from_file
-from .evaluation import RemoteJsonClassifier, evaluate_task
+from .evaluation import LOCAL_EVALUATOR_VERSION, RemoteJsonClassifier, evaluate_task
 from .models import Decision, ModelCapability, TaskContext, fingerprint
 from .priors import apply_priors
 from .router import Router
@@ -25,7 +28,12 @@ class RoutingService:
         self.home = home or default_home()
         self.cache_path = self.home / "cache.sqlite3"
         self.cache: DecisionCache | None = None
-        self.audit = AuditLogger(self.home / "audit.jsonl", config.log_enabled)
+        self.audit = AuditLogger(
+            self.home / "audit.jsonl",
+            config.log_enabled,
+            config.log_max_bytes,
+            config.log_backup_count,
+        )
 
     @classmethod
     def from_catalog_file(
@@ -40,26 +48,119 @@ class RoutingService:
         if not dry_run and self.cache is None:
             self.cache = DecisionCache(self.cache_path, self.config.cache_ttl_seconds)
         bypass_cache = task.force_reevaluation or task.significant_model_failure
+        cache_status = "disabled" if dry_run else "not-eligible"
         if self.cache is not None and bypass_cache:
             self.cache.invalidate_scope(identity.scope_key)
+            cache_status = "bypassed"
         if (
             self.cache is not None
             and task.event in {"tool_loop", "continuation"}
             and not bypass_cache
         ):
+            cache_status = "miss"
             cached = self.cache.get(identity.key, identity.explanation)
             if cached:
+                cached = self._with_evidence(
+                    cached,
+                    task,
+                    signals.source,
+                    classifier_used,
+                    identity,
+                    "hit",
+                )
                 self.audit.decision(task, cached)
                 return cached
         assessments = None
         if classifier_used:
             assessments = RemoteJsonClassifier(self.config.classifier).score(task, self.profiles)
         decision = self.router.route(task, self.profiles, signals, assessments)
+        decision = self._with_evidence(
+            decision,
+            task,
+            signals.source,
+            classifier_used,
+            identity,
+            cache_status,
+        )
         if self.cache is not None and decision.status == "selected" and not bypass_cache:
             self.cache.put(identity.key, decision, identity.scope_key)
         if not dry_run:
             self.audit.decision(task, decision)
         return decision
+
+    def _with_evidence(
+        self,
+        decision: Decision,
+        task: TaskContext,
+        evaluator_source: str,
+        classifier_used: bool,
+        identity: CacheIdentity,
+        cache_status: str,
+    ) -> Decision:
+        policy = self.config.policy
+        weights = policy.weights.normalized()
+        ordered_catalog = sorted(self.catalog, key=lambda model: model.model)
+        reevaluation_triggers = []
+        if task.significant_model_failure:
+            reevaluation_triggers.append("significant-model-failure")
+        if task.force_reevaluation:
+            reevaluation_triggers.append("explicit")
+        evidence = {
+            **decision.routing_evidence,
+            "evaluator": {
+                "source": (
+                    f"remote-json:{self.config.classifier.model}"
+                    if classifier_used
+                    else evaluator_source
+                ),
+                "version": (
+                    self.config.classifier.version if classifier_used else LOCAL_EVALUATOR_VERSION
+                ),
+            },
+            "catalog": {
+                "capability_versions": [
+                    {"model": model.model, "version": model.capability_version}
+                    for model in ordered_catalog
+                ],
+                "prior_versions": [
+                    {"model": model.model, "version": model.prior_version}
+                    for model in ordered_catalog
+                ],
+                "card_version": fingerprint([model.to_dict() for model in ordered_catalog]),
+            },
+            "cache": {
+                "status": cache_status,
+                "identity_prefix": identity.key[:16],
+            },
+            "hysteresis": {
+                "applied": decision.hysteresis_applied,
+                "previous_profile": decision.previous_profile,
+                "threshold": self.config.switch_hysteresis,
+            },
+            "reevaluation_trigger": (
+                reevaluation_triggers[0] if len(reevaluation_triggers) == 1 else None
+            ),
+            "reevaluation_triggers": reevaluation_triggers,
+            "environment_failure_ignored": task.environment_failure,
+            "policy": {
+                "name": policy.name,
+                "version": policy.version,
+                "minimum_quality": policy.minimum_quality,
+                "weights": {
+                    "consumption": weights.consumption,
+                    "quality_gap": weights.quality_gap,
+                    "latency": weights.latency,
+                    "switch_cost": weights.switch_cost,
+                },
+            },
+            "runtime": {
+                "adapter": self.config.adapter,
+                "codex_smart_route": __version__,
+                "python": platform.python_version(),
+                "platform": platform.system(),
+            },
+        }
+        return replace(decision, routing_evidence=evidence)
 
     def _cache_identity(self, task: TaskContext, classifier_used: bool) -> CacheIdentity:
         policy = self.config.policy

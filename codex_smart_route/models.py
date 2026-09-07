@@ -166,6 +166,7 @@ class Decision:
     selected_reasoning_effort: str | None
     selected_profile: str | None
     requested_model: str | None
+    requested_reasoning_effort: str | None = None
     forwarded_model: str | None = None
     forwarded_reasoning_effort: str | None = None
     confirmed_model: str | None = None
@@ -179,6 +180,9 @@ class Decision:
     policy_name: str = ""
     policy_version: str = ""
     cached: bool = False
+    hysteresis_applied: bool = False
+    previous_profile: str | None = None
+    routing_evidence: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = dataclasses.asdict(self)

@@ -180,6 +180,16 @@ def test_file_catalog_requires_path():
         parse_config({"catalog": {"strategy": "file"}})
 
 
+def test_audit_retention_configuration_and_validation():
+    config = parse_config({"logging": {"max_bytes": 1234, "backup_count": 0}})
+    assert config.log_max_bytes == 1234
+    assert config.log_backup_count == 0
+    with pytest.raises(ConfigError, match="logging.max_bytes"):
+        parse_config({"logging": {"max_bytes": 0}})
+    with pytest.raises(ConfigError, match="logging.backup_count"):
+        parse_config({"logging": {"backup_count": -1}})
+
+
 def test_two_repositories_have_independent_policy_and_runtime_namespaces(tmp_path):
     home = tmp_path / "home"
     first = tmp_path / "first"

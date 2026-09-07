@@ -67,6 +67,8 @@ class RouterConfig:
     capability_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     log_enabled: bool = True
     log_redact: bool = True
+    log_max_bytes: int = 5_000_000
+    log_backup_count: int = 3
     experimental_app_server: bool = False
     catalog_strategy: str = "app-server"
     catalog_path: str | None = None
@@ -326,12 +328,18 @@ def parse_config(raw: dict[str, Any]) -> RouterConfig:
         capability_overrides={str(key): value for key, value in overrides.items()},
         log_enabled=bool(raw.get("logging", {}).get("enabled", True)),
         log_redact=bool(raw.get("logging", {}).get("redact", True)),
+        log_max_bytes=int(raw.get("logging", {}).get("max_bytes", 5_000_000)),
+        log_backup_count=int(raw.get("logging", {}).get("backup_count", 3)),
         experimental_app_server=bool(raw.get("experimental", {}).get("app_server", False)),
         catalog_strategy=catalog_strategy,
         catalog_path=catalog_path,
     )
     if config.cache_ttl_seconds < 1:
         raise ConfigError("cache_ttl_seconds must be positive")
+    if config.log_max_bytes < 1:
+        raise ConfigError("logging.max_bytes must be positive")
+    if config.log_backup_count < 0:
+        raise ConfigError("logging.backup_count must be non-negative")
     return config
 
 
