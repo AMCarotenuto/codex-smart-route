@@ -9,7 +9,13 @@ from codex_smart_route.cli import main
 from codex_smart_route.doctor import run_doctor
 from codex_smart_route.models import TaskContext
 from codex_smart_route.service import RoutingService
-from codex_smart_route.skill_install import SkillInstallError, install_skill, uninstall_skill
+from codex_smart_route.skill_install import (
+    MANIFEST_NAME,
+    SkillInstallError,
+    install_skill,
+    skill_root_path,
+    uninstall_skill,
+)
 
 
 def test_tool_loop_uses_persistent_cache(config, catalog, tmp_path):
@@ -42,40 +48,102 @@ def test_new_phase_reassesses(config, catalog, tmp_path):
 
 def test_skill_install_remove(tmp_path):
     source = Path(__file__).parents[2] / "skill" / "codex-smart-route"
-    installed = install_skill(source, tmp_path)
+    installed = install_skill(source, user_home=tmp_path)
+    assert installed["scope"] == "user"
+    assert installed["documented"] is True
     assert Path(str(installed["target"]), "SKILL.md").exists()
-    uninstall_skill(tmp_path)
+    uninstall_skill(user_home=tmp_path)
     assert not Path(str(installed["target"])).exists()
 
 
 def test_skill_install_dry_run_changes_nothing(tmp_path):
     source = Path(__file__).parents[2] / "skill" / "codex-smart-route"
-    result = install_skill(source, tmp_path, dry_run=True)
+    result = install_skill(source, dry_run=True, user_home=tmp_path)
     assert result["dry_run"] is True
-    assert not (tmp_path / "skills").exists()
+    assert not (tmp_path / ".agents").exists()
+
+
+def test_skill_install_validates_source_before_touching_target(tmp_path):
+    with pytest.raises(SkillInstallError, match="source is invalid"):
+        install_skill(tmp_path / "missing", user_home=tmp_path)
+    assert not (tmp_path / ".agents").exists()
 
 
 def test_skill_refuses_unmanaged_overwrite(tmp_path):
-    target = tmp_path / "skills" / "codex-smart-route"
+    target = tmp_path / ".agents" / "skills" / "codex-smart-route"
     target.mkdir(parents=True)
     (target / "mine.txt").write_text("mine")
     with pytest.raises(SkillInstallError):
-        install_skill(Path(__file__).parents[2] / "skill" / "codex-smart-route", tmp_path)
+        install_skill(
+            Path(__file__).parents[2] / "skill" / "codex-smart-route",
+            user_home=tmp_path,
+        )
 
 
 def test_skill_refuses_modified_uninstall(tmp_path):
     source = Path(__file__).parents[2] / "skill" / "codex-smart-route"
-    install_skill(source, tmp_path)
-    target = tmp_path / "skills" / "codex-smart-route"
+    install_skill(source, user_home=tmp_path)
+    target = tmp_path / ".agents" / "skills" / "codex-smart-route"
     (target / "SKILL.md").write_text("changed")
     with pytest.raises(SkillInstallError, match="modified"):
-        uninstall_skill(tmp_path)
+        uninstall_skill(user_home=tmp_path)
     assert target.exists()
 
 
+def test_repo_scope_update_and_uninstall_preserve_unmanaged_files(tmp_path):
+    source = Path(__file__).parents[2] / "skill" / "codex-smart-route"
+    marker = tmp_path / ".agents" / "team-owned.txt"
+    marker.parent.mkdir()
+    marker.write_text("keep", encoding="utf-8")
+    installed = install_skill(source, scope="repo", repo=tmp_path)
+    assert Path(str(installed["target"])) == (tmp_path / ".agents" / "skills" / "codex-smart-route")
+    updated = install_skill(source, scope="repo", repo=tmp_path)
+    assert updated["action"] == "update"
+    uninstall_skill(scope="repo", repo=tmp_path)
+    assert marker.read_text(encoding="utf-8") == "keep"
+    assert (tmp_path / ".agents" / "skills").is_dir()
+
+
+def test_legacy_scope_is_explicit_and_unverified(tmp_path):
+    source = Path(__file__).parents[2] / "skill" / "codex-smart-route"
+    installed = install_skill(source, scope="legacy", codex_home=tmp_path)
+    assert installed["target"] == str(tmp_path / "skills" / "codex-smart-route")
+    assert installed["documented"] is False
+    assert installed["compatibility"] == "explicit-unverified"
+    uninstall_skill(scope="legacy", codex_home=tmp_path)
+
+
+def test_manifest_cannot_claim_different_scope(tmp_path):
+    source = Path(__file__).parents[2] / "skill" / "codex-smart-route"
+    installed = install_skill(source, user_home=tmp_path)
+    manifest_path = Path(str(installed["target"])) / MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["scope"] = "repo"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(SkillInstallError, match="does not own"):
+        uninstall_skill(user_home=tmp_path)
+
+
+def test_repo_scope_requires_existing_directory(tmp_path):
+    source = Path(__file__).parents[2] / "skill" / "codex-smart-route"
+    with pytest.raises(SkillInstallError, match="not a directory"):
+        install_skill(source, scope="repo", repo=tmp_path / "missing")
+
+
 def test_doctor_is_read_only(config, tmp_path):
-    report = run_doctor(config, tmp_path, discover=False)
+    report = run_doctor(
+        config,
+        tmp_path / ".codex",
+        discover=False,
+        skill_scope="repo",
+        repo=tmp_path,
+        user_home=tmp_path,
+    )
     assert report["global_changes_required"] is False
+    assert report["skill_scope"] == "repo"
+    assert report["selected_skill_root"] == str(tmp_path / ".agents" / "skills")
+    assert report["legacy_compatibility"] == "not-detected-unverified"
+    assert {item["scope"] for item in report["skill_roots"]} == {"user", "repo", "legacy"}
     assert not (tmp_path / "config.toml").exists()
 
 
@@ -91,8 +159,28 @@ def test_cli_route_json(config, catalog_path, tmp_path, monkeypatch, capsys):
 
 
 def test_cross_platform_path_objects():
-    assert str(PureWindowsPath("C:/Users/A/.codex-smart-route/config.toml")).endswith("config.toml")
-    assert str(PurePosixPath("/home/a/.codex-smart-route/config.toml")).endswith("config.toml")
+    windows_user = skill_root_path("user", PureWindowsPath("C:/Users/A"))
+    windows_repo = skill_root_path("repo", PureWindowsPath("D:/src/project"))
+    posix_user = skill_root_path("user", PurePosixPath("/home/a"))
+    posix_repo = skill_root_path("repo", PurePosixPath("/src/project"))
+    assert windows_user == PureWindowsPath("C:/Users/A/.agents/skills")
+    assert windows_repo == PureWindowsPath("D:/src/project/.agents/skills")
+    assert posix_user == PurePosixPath("/home/a/.agents/skills")
+    assert posix_repo == PurePosixPath("/src/project/.agents/skills")
+
+
+def test_cli_repo_scope_dry_run_and_validation(config, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("CODEX_SMART_ROUTE_HOME", str(tmp_path / "router"))
+    code = main(["install-skill", "--scope", "repo", "--repo", str(tmp_path), "--dry-run"])
+    report = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert report["scope"] == "repo"
+    assert report["target"] == str(tmp_path / ".agents" / "skills" / "codex-smart-route")
+    assert not (tmp_path / ".agents").exists()
+
+    code = main(["install-skill", "--scope", "user", "--repo", str(tmp_path)])
+    assert code == 1
+    assert "valid only with --scope repo" in capsys.readouterr().err
 
 
 def test_packaged_skill_matches_repository_skill():
@@ -100,3 +188,7 @@ def test_packaged_skill_matches_repository_skill():
     packaged = root / "codex_smart_route" / "bundled_skill" / "SKILL.md"
     repository = root / "skill" / "codex-smart-route" / "SKILL.md"
     assert packaged.read_text().strip() == repository.read_text().strip()
+    packaged_yaml = root / "codex_smart_route" / "bundled_skill" / "agents" / "openai.yaml"
+    repository_yaml = root / "skill" / "codex-smart-route" / "agents" / "openai.yaml"
+    assert packaged_yaml.read_text() == repository_yaml.read_text()
+    assert "allow_implicit_invocation: false" in packaged_yaml.read_text()

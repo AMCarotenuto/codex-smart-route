@@ -88,7 +88,8 @@ smart-route reevaluate
 smart-route config validate | show
 smart-route cache clear
 smart-route logs
-smart-route install-skill | uninstall-skill
+smart-route install-skill --scope user|repo|legacy
+smart-route uninstall-skill --scope user|repo|legacy
 ```
 
 JSON output is stable enough for automation within `0.1.x`. Exit codes: `0` success/selection, `2` no eligible route, `1` configuration/runtime error.
@@ -107,12 +108,19 @@ Selection or payload inspection never counts as confirmation.
 ## Skill
 
 ```bash
-smart-route install-skill --dry-run
-smart-route install-skill
-smart-route uninstall-skill
+smart-route install-skill --scope user --dry-run
+smart-route install-skill --scope user
+smart-route uninstall-skill --scope user
 ```
 
-Installer touches only `~/.codex/skills/codex-smart-route`, records content integrity, refuses unmanaged overwrite, and removal refuses modified content. Package installation itself changes no Codex configuration.
+User scope installs to documented `$HOME/.agents/skills/codex-smart-route`. Repository scope uses
+`smart-route install-skill --scope repo --repo .`; Codex discovers it only inside that repository
+hierarchy. Repeat install command to update. Explicit `legacy` scope targets
+`$CODEX_HOME/skills/codex-smart-route`, but current documentation does not verify that discovery
+root. Installer records scope and content integrity, refuses unmanaged or modified targets, and
+removes only its managed skill directory. It never modifies global or repository `AGENTS.md`.
+Implicit invocation is disabled; invoke control skill explicitly as `$codex-smart-route`. See
+[skill installation](docs/SKILL.md) for exact dry-run, update, uninstall, legacy, and doctor commands.
 
 ## Offline behavior and optional classifier
 
@@ -125,7 +133,7 @@ Python 3.11+; Windows, macOS, and Linux paths covered. Local audit used Codex CL
 ## Uninstall
 
 ```bash
-smart-route uninstall-skill
+smart-route uninstall-skill --scope user
 python -m pip uninstall codex-smart-route
 ```
 

@@ -12,6 +12,12 @@ from typing import Any
 
 from .config import RouterConfig, default_home
 from .discovery import AppServerDiscovery, DiscoveryError
+from .skill_install import (
+    SKILL_LOCATION_DOCS,
+    SkillScope,
+    detected_skill_locations,
+    resolve_skill_location,
+)
 
 
 def _version(command: list[str]) -> str | None:
@@ -36,11 +42,33 @@ def port_available(host: str = "127.0.0.1", port: int = 8765) -> bool:
 
 
 def run_doctor(
-    config: RouterConfig, codex_home: Path | None = None, discover: bool = True
+    config: RouterConfig,
+    codex_home: Path | None = None,
+    discover: bool = True,
+    *,
+    skill_scope: SkillScope = "user",
+    repo: Path | None = None,
+    user_home: Path | None = None,
 ) -> dict[str, Any]:
     home = default_home()
     actual_codex_home = codex_home or Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    actual_user_home = user_home or Path.home()
     auth_path = actual_codex_home / "auth.json"
+    locations = detected_skill_locations(
+        user_home=actual_user_home, repo=repo, codex_home=actual_codex_home
+    )
+    selected_location = resolve_skill_location(
+        skill_scope, user_home=actual_user_home, repo=repo, codex_home=actual_codex_home
+    )
+    legacy = next(item for item in locations if item["scope"] == "legacy")
+    if legacy["installed"]:
+        legacy_status = (
+            "managed-installation-detected"
+            if legacy["managed"]
+            else "unmanaged-installation-detected"
+        )
+    else:
+        legacy_status = "not-detected-unverified"
     report: dict[str, Any] = {
         "python": sys.version.split()[0],
         "python_supported": sys.version_info >= (3, 11),
@@ -53,9 +81,13 @@ def run_doctor(
         "app_server_experimental": config.experimental_app_server,
         "loopback": "127.0.0.1",
         "default_port_available": port_available(),
-        "skill_installed": (
-            actual_codex_home / "skills" / "codex-smart-route" / "SKILL.md"
-        ).exists(),
+        "skill_installed": (selected_location.target / "SKILL.md").is_file(),
+        "skill_scope": skill_scope,
+        "selected_skill_root": str(selected_location.root),
+        "skill_roots": locations,
+        "skill_roots_documentation": SKILL_LOCATION_DOCS,
+        "skill_roots_version_basis": "current-official-documentation",
+        "legacy_compatibility": legacy_status,
         "global_changes_required": False,
         "state_directory": str(home),
         "models": [],
