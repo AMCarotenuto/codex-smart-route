@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27,<2"]
+requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,7 +8,8 @@ version = "0.1.0"
 description = "Automatic main-model and reasoning router for Codex"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {file = "LICENSE"}
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{name = "Codex Smart Route contributors"}]
 keywords = ["codex", "model-router", "llm-routing", "developer-tools"]
 classifiers = [
@@ -30,6 +31,7 @@ smart-route = "codex_smart_route.cli:main"
 [project.urls]
 Repository = "https://github.com/AMCarotenuto/codex-smart-route"
 Issues = "https://github.com/AMCarotenuto/codex-smart-route/issues"
+Changelog = "https://github.com/AMCarotenuto/codex-smart-route/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["codex_smart_route"]
