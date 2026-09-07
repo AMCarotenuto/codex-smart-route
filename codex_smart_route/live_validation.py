@@ -101,7 +101,11 @@ class EventSummary:
             self.terminal = True
 
     def to_dict(self) -> dict[str, Any]:
-        return dataclasses.asdict(self) | {"tool_round_trip": self.tool_round_trip}
+        data = dataclasses.asdict(self)
+        data["event_types"] = [
+            {"name": name, "count": count} for name, count in sorted(self.event_types.items())
+        ]
+        return data | {"tool_round_trip": self.tool_round_trip}
 
 
 @dataclass(frozen=True)
@@ -234,7 +238,22 @@ class AppServerSession:
         ).start()
         self.next_id = 1
         self.summary = EventSummary()
-        self.notifications: list[dict[str, Any]] = []
+        self.notifications: list[dict[str, str | None]] = []
+
+    @staticmethod
+    def _notification_marker(value: dict[str, Any]) -> dict[str, str | None]:
+        """Retain only non-sensitive protocol identifiers needed for matching."""
+        params = value.get("params")
+        item = params.get("item") if isinstance(params, dict) else None
+        item_type = item.get("type") if isinstance(item, dict) else None
+        return {
+            "method": value.get("method") if isinstance(value.get("method"), str) else None,
+            "item_type": item_type if isinstance(item_type, str) else None,
+        }
+
+    @staticmethod
+    def _matches(marker: dict[str, str | None], methods: set[str], item_types: set[str]) -> bool:
+        return marker.get("method") in methods or marker.get("item_type") in item_types
 
     def send(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         request_id = self.next_id
@@ -264,12 +283,15 @@ class AppServerSession:
                     code = error.get("code") if isinstance(error, dict) else "unknown"
                     raise LiveValidationError(f"App Server {method} failed with code {code}")
                 return value
-            self.notifications.append({"method": value.get("method")})
+            self.notifications.append(self._notification_marker(value))
         raise LiveValidationError(f"App Server {method} timed out")
 
-    def wait_for(self, methods: set[str]) -> dict[str, Any]:
+    def wait_for(
+        self, methods: set[str], item_types: set[str] | None = None
+    ) -> dict[str, str | None]:
+        expected_items = item_types or set()
         for index, value in enumerate(self.notifications):
-            if value.get("method") in methods:
+            if self._matches(value, methods, expected_items):
                 return self.notifications.pop(index)
         deadline = time.monotonic() + self.timeout
         while time.monotonic() < deadline:
@@ -281,10 +303,12 @@ class AppServerSession:
                 continue
             if isinstance(value, dict):
                 self.summary.observe(value)
-                if value.get("method") in methods:
-                    return value
-                self.notifications.append({"method": value.get("method")})
-        raise LiveValidationError(f"App Server event timed out: {sorted(methods)}")
+                marker = self._notification_marker(value)
+                if self._matches(marker, methods, expected_items):
+                    return marker
+                self.notifications.append(marker)
+        expected = sorted(methods | expected_items)
+        raise LiveValidationError(f"App Server event timed out: {expected}")
 
     def close(self) -> None:
         if self.process.poll() is None:
@@ -427,14 +451,6 @@ def run_app_server_suite(
             raise LiveValidationError("App Server continuation lost Auto routing")
         session.send("turn/start", continued)
         session.wait_for({"turn/completed"})
-        compaction = "unsupported"
-        try:
-            session.send("thread/compact/start", {"threadId": thread_id})
-            session.wait_for({"thread/compacted"})
-            compaction = "passed"
-        except LiveValidationError as exc:
-            if "code -32601" not in str(exc):
-                raise
         cancel_turn = session.send("turn/start", continued)
         cancel_result = cancel_turn.get("result")
         turn = cancel_result.get("turn") if isinstance(cancel_result, dict) else None
@@ -443,6 +459,14 @@ def run_app_server_suite(
             raise LiveValidationError("App Server did not return cancellable turn id")
         session.send("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
         session.wait_for({"turn/completed", "turn/cancelled"})
+        compaction = "unsupported"
+        try:
+            session.send("thread/compact/start", {"threadId": thread_id})
+            session.wait_for({"thread/compacted"}, {"contextCompaction"})
+            compaction = "passed"
+        except LiveValidationError as exc:
+            if "code -32601" not in str(exc):
+                raise
         evidence = ExecutionEvidence.from_decision(
             "app-server-auto", decision, session.summary, 0, cancelled=True
         )

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from codex_smart_route.live_validation import (
+    AppServerSession,
     EventSummary,
     ExecutionEvidence,
     LiveValidationError,
@@ -117,7 +118,9 @@ def test_app_server_suite_forwards_auto_continues_compacts_and_cancels(monkeypat
                 return {"result": {"turn": {"id": "turn-1"}}}
             return {"result": {}}
 
-        def wait_for(self, methods):
+        def wait_for(self, methods, item_types=None):
+            if "thread/compacted" in methods:
+                assert item_types == {"contextCompaction"}
             return {"method": sorted(methods)[0]}
 
     monkeypatch.setattr("codex_smart_route.live_validation.AppServerSession", Session)
@@ -131,11 +134,32 @@ def test_app_server_suite_forwards_auto_continues_compacts_and_cancels(monkeypat
     assert result["evidence"]["confirmed_model"] == "unverified"
 
 
+def test_app_server_notification_marker_keeps_only_protocol_identifiers():
+    marker = AppServerSession._notification_marker(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {"type": "contextCompaction", "text": "sensitive"},
+                "prompt": "sensitive",
+            },
+        }
+    )
+    assert marker == {"method": "item/completed", "item_type": "contextCompaction"}
+    assert AppServerSession._matches(marker, {"thread/compacted"}, {"contextCompaction"})
+
+
 def test_report_schema_rejects_secrets_and_raw_output():
     with pytest.raises(LiveValidationError, match="credential-like"):
         validate_report_safe({"value": "sk-abcdefgh12345678"})
     with pytest.raises(LiveValidationError, match="sensitive field"):
         validate_report_safe({"output": "harmless"})
+
+
+def test_event_type_names_are_values_not_dynamic_schema_keys():
+    summary = EventSummary(event_types={"thread/tokenUsage/updated": 1})
+    payload = {"events": summary.to_dict()}
+    validate_report_safe(payload)
+    assert payload["events"]["event_types"] == [{"name": "thread/tokenUsage/updated", "count": 1}]
 
 
 def test_main_refuses_without_double_consent(monkeypatch, capsys):
