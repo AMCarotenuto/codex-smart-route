@@ -75,4 +75,8 @@ selected user config override both. Prior fields include relative metrics, `prio
 `prior_weaknesses`, `prior_source`, `prior_confidence`, `prior_version`, and
 `tie_break_priority`. See [Model priors and capability cards](MODEL_PRIORS.md).
 
-Classifier modes: `disabled` (default), `local`, and `remote`. Remote mode requires explicit fixed model and endpoint; credentials remain transport/environment responsibility and must not be stored in this file. Auto slug is rejected as classifier model.
+Classifier modes: `disabled` (default), `local`, and `remote`. Remote mode requires explicit fixed
+model and endpoint; credentials remain transport/environment responsibility and must not be stored
+in this file. Auto slug is rejected as classifier model. Set `classifier.version` whenever classifier
+prompt, schema, model revision, or scoring semantics change; cache identity includes that version
+when remote classification is used.

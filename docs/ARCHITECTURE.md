@@ -14,7 +14,14 @@ Current provider flags (`imageGeneration`, `namespaceTools`, `webSearch`) remain
 
 `evaluation` extracts general task signals. Clear cases use deterministic rules; optional remote classification returns structured suitability scores and never sees economic weights. `router` runs hard gates, quality floor, normalized weighted penalty, and switch hysteresis in that order.
 
-`state` caches by session, task, phase, relevant-context fingerprint, policy version, capability version, availability, and mode. Tool-loop continuations reuse matching decisions. `audit` stores identifiers and hashes, not task text.
+`state` uses a versioned, opaque cache identity. It covers hashed session/task/phase and relevant
+context; active policy, normalized weights, quality floor, allowlists and fallback; complete
+capability-card, prior, availability, modality, tool, context, authentication, and budget inputs;
+manual/current profiles and hysteresis; classifier identity when used; and adapter/routing mode.
+Tool-loop continuations reuse only exact matches. Explicit reevaluation or significant model failure
+invalidates the matching scope and is never cached; environment failure deliberately leaves identity
+unchanged because it neither changes capability nor justifies escalation. `audit` stores hashes and
+cache-hit evidence, never task text or credentials.
 
 `adapters` apply decisions. `CodexCliAdapter` starts `codex exec` with both model and reasoning configuration. Experimental JSONL App Server proxy patches `turn/start` while forwarding all other traffic.
 

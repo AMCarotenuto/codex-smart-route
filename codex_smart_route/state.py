@@ -9,10 +9,55 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .models import CandidateScore, Decision, TaskContext, fingerprint
+
+
+@dataclass(frozen=True)
+class CacheIdentity:
+    """Opaque cache key plus redacted evidence about inputs that matched."""
+
+    key: str
+    scope_key: str
+    reuse_factors: tuple[str, ...]
+
+    @classmethod
+    def build(cls, task: TaskContext, routing_inputs: dict[str, Any]) -> CacheIdentity:
+        scope_key = fingerprint(
+            {
+                "session": task.session_id,
+                "task": task.task_id,
+                "phase": task.phase_id,
+            }
+        )
+        return cls(
+            key=fingerprint(
+                {
+                    "identity_schema": 2,
+                    "scope": scope_key,
+                    "context": task.context_fingerprint,
+                    "routing_inputs": routing_inputs,
+                }
+            ),
+            scope_key=scope_key,
+            reuse_factors=(
+                "session/task/phase",
+                "relevant-context fingerprint",
+                "policy/weights/quality floor",
+                "capability/prior/card versions",
+                "availability and hard-gate constraints",
+                "budget and profile/hysteresis inputs",
+                "classifier identity",
+                "adapter/routing mode",
+            ),
+        )
+
+    @property
+    def explanation(self) -> str:
+        return "matching " + ", ".join(self.reuse_factors)
 
 
 class DecisionCache:
@@ -24,8 +69,21 @@ class DecisionCache:
         with self._database() as db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS decisions "
-                "(cache_key TEXT PRIMARY KEY, created REAL NOT NULL, payload TEXT NOT NULL)"
+                "(cache_key TEXT PRIMARY KEY, scope_key TEXT NOT NULL DEFAULT '', "
+                "created REAL NOT NULL, payload TEXT NOT NULL)"
             )
+            columns = {str(row[1]) for row in db.execute("PRAGMA table_info(decisions)").fetchall()}
+            if "scope_key" not in columns:
+                try:
+                    db.execute(
+                        "ALTER TABLE decisions ADD COLUMN scope_key TEXT NOT NULL DEFAULT ''"
+                    )
+                except sqlite3.OperationalError:
+                    refreshed = {
+                        str(row[1]) for row in db.execute("PRAGMA table_info(decisions)").fetchall()
+                    }
+                    if "scope_key" not in refreshed:
+                        raise
 
     @contextmanager
     def _database(self) -> Iterator[sqlite3.Connection]:
@@ -44,20 +102,17 @@ class DecisionCache:
         availability: str,
         mode: str,
     ) -> str:
-        return fingerprint(
+        return CacheIdentity.build(
+            task,
             {
-                "session": task.session_id,
-                "task": task.task_id,
-                "phase": task.phase_id,
-                "context": task.context_fingerprint,
                 "policy": policy_version,
                 "capabilities": capability_version,
                 "availability": availability,
                 "mode": mode,
-            }
-        )
+            },
+        ).key
 
-    def get(self, key: str) -> Decision | None:
+    def get(self, key: str, explanation: str | None = None) -> Decision | None:
         with self._lock, self._database() as db:
             row = db.execute(
                 "SELECT created, payload FROM decisions WHERE cache_key = ?", (key,)
@@ -83,15 +138,22 @@ class DecisionCache:
             }
             data["hard_gates"] = tuple(data.get("hard_gates", []))
             data["cached"] = True
+            if explanation:
+                data["reason"] = f"cache hit: {explanation}; original: {data['reason']}"
             return Decision(**data)
 
-    def put(self, key: str, decision: Decision) -> None:
+    def put(self, key: str, decision: Decision, scope_key: str = "") -> None:
         payload = json.dumps(dataclasses.asdict(decision), separators=(",", ":"))
         with self._lock, self._database() as db:
             db.execute(
-                "INSERT OR REPLACE INTO decisions(cache_key, created, payload) VALUES (?, ?, ?)",
-                (key, time.time(), payload),
+                "INSERT OR REPLACE INTO decisions(cache_key, scope_key, created, payload) "
+                "VALUES (?, ?, ?, ?)",
+                (key, scope_key, time.time(), payload),
             )
+
+    def invalidate_scope(self, scope_key: str) -> None:
+        with self._lock, self._database() as db:
+            db.execute("DELETE FROM decisions WHERE scope_key = ?", (scope_key,))
 
     def clear(self) -> None:
         with self._lock, self._database() as db:
