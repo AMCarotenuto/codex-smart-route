@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -21,27 +24,356 @@ class Classifier(Protocol):
     ) -> dict[str, tuple[float, float]]: ...
 
 
-def _contains(text: str, words: tuple[str, ...]) -> float:
-    lowered = text.lower()
-    return min(1.0, sum(word in lowered for word in words) / 2)
+SIGNAL_NAMES = (
+    "complexity",
+    "debugging",
+    "cross",
+    "consequence",
+    "mechanical",
+    "creative",
+    "ambiguity",
+    "criteria",
+    "coupling",
+)
 
 
-def evaluate_task(task: TaskContext) -> TaskSignals:
+@dataclass(frozen=True)
+class LanguagePack:
+    """Deterministic vocabulary for one language."""
+
+    language: str
+    terms: Mapping[str, tuple[str, ...]]
+
+
+ENGLISH = LanguagePack(
+    "en",
+    {
+        "complexity": (
+            "prove",
+            "proof",
+            "architecture",
+            "architectural",
+            "root cause",
+            "optimize",
+            "optimization",
+            "strategy",
+        ),
+        "debugging": (
+            "bug",
+            "bugs",
+            "debug",
+            "debugging",
+            "failure",
+            "failures",
+            "regression",
+            "regressions",
+            "crash",
+            "crashes",
+            "investigate",
+            "investigation",
+        ),
+        "cross": (
+            "across",
+            "multiple files",
+            "multi file",
+            "migration",
+            "migrations",
+            "refactor",
+            "refactoring",
+            "end to end",
+            "cross cutting",
+        ),
+        "consequence": (
+            "production",
+            "security",
+            "secure",
+            "authentication",
+            "authorization",
+            "financial",
+            "medical",
+            "legal",
+            "irreversible",
+        ),
+        "mechanical": (
+            "rename",
+            "renaming",
+            "format",
+            "formatting",
+            "typo",
+            "typos",
+            "copy",
+            "sorting",
+            "sort",
+            "mechanical",
+        ),
+        "creative": (
+            "design",
+            "designing",
+            "write",
+            "writing",
+            "brainstorm",
+            "brainstorming",
+            "creative",
+            "visual",
+        ),
+        "ambiguity": (
+            "ambiguous",
+            "ambiguity",
+            "maybe",
+            "unclear",
+            "unknown",
+            "choose",
+            "choice",
+            "recommend",
+            "recommendation",
+        ),
+        "criteria": (
+            "acceptance criteria",
+            "must",
+            "exactly",
+            "test",
+            "tests",
+            "verify",
+            "verification",
+        ),
+        "coupling": (
+            "interdependent",
+            "interdependence",
+            "coupled",
+            "coupling",
+            "integration",
+            "integrations",
+            "protocol",
+            "protocols",
+        ),
+    },
+)
+
+ITALIAN = LanguagePack(
+    "it",
+    {
+        "complexity": (
+            "dimostra",
+            "dimostrare",
+            "dimostrazione",
+            "architettura",
+            "architetturale",
+            "causa radice",
+            "causa principale",
+            "ottimizza",
+            "ottimizzare",
+            "ottimizzazione",
+            "strategia",
+        ),
+        "debugging": (
+            "bug",
+            "debug",
+            "debugging",
+            "errore",
+            "errori",
+            "guasto",
+            "guasti",
+            "fallimento",
+            "fallimenti",
+            "regressione",
+            "regressioni",
+            "crash",
+            "indaga",
+            "indagare",
+            "indagine",
+        ),
+        "cross": (
+            "trasversale",
+            "trasversalmente",
+            "piu file",
+            "su piu file",
+            "file multipli",
+            "migrazione",
+            "migrazioni",
+            "rifattorizza",
+            "rifattorizzare",
+            "rifattorizzazione",
+            "da capo a fondo",
+        ),
+        "consequence": (
+            "produzione",
+            "sicurezza",
+            "sicuro",
+            "sicura",
+            "autenticazione",
+            "autorizzazione",
+            "finanziario",
+            "finanziaria",
+            "medico",
+            "medica",
+            "legale",
+            "irreversibile",
+        ),
+        "mechanical": (
+            "rinomina",
+            "rinominare",
+            "rinominazione",
+            "formatta",
+            "formattare",
+            "formattazione",
+            "refuso",
+            "refusi",
+            "copia",
+            "copiare",
+            "ordina",
+            "ordinare",
+            "meccanico",
+            "meccanica",
+        ),
+        "creative": (
+            "progetta",
+            "progettare",
+            "progettazione",
+            "scrivi",
+            "scrivere",
+            "scrittura",
+            "idee",
+            "creativo",
+            "creativa",
+            "visuale",
+        ),
+        "ambiguity": (
+            "ambiguo",
+            "ambigua",
+            "ambiguita",
+            "forse",
+            "poco chiaro",
+            "sconosciuto",
+            "sconosciuta",
+            "scegli",
+            "scegliere",
+            "consiglia",
+            "consigliare",
+            "raccomanda",
+            "raccomandare",
+        ),
+        "criteria": (
+            "criteri di accettazione",
+            "deve",
+            "devono",
+            "esattamente",
+            "test",
+            "verifica",
+            "verificare",
+            "validazione",
+        ),
+        "coupling": (
+            "interdipendente",
+            "interdipendenti",
+            "interdipendenza",
+            "accoppiato",
+            "accoppiata",
+            "accoppiamento",
+            "integrazione",
+            "integrazioni",
+            "protocollo",
+            "protocolli",
+        ),
+    },
+)
+
+DEFAULT_LANGUAGE_PACKS = (ENGLISH, ITALIAN)
+ROUTING_TAGS = frozenset(
+    {
+        "mechanical",
+        "debugging",
+        "cross-cutting",
+        "high-consequence",
+        "creative",
+        "ambiguous",
+        "strict-verification",
+    }
+)
+_TAG_PATTERN = re.compile(r"\[\s*([a-zA-Z][a-zA-Z -]*)\s*\]")
+
+
+def normalize_text(text: str) -> str:
+    """Fold case, accents, and punctuation without external dependencies."""
+
+    folded = unicodedata.normalize("NFKD", text.casefold())
+    without_accents = "".join(char for char in folded if not unicodedata.combining(char))
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", without_accents).split())
+
+
+def parse_routing_tags(text: str) -> frozenset[str]:
+    return frozenset(
+        tag
+        for match in _TAG_PATTERN.finditer(text)
+        if (tag := normalize_text(match.group(1)).replace(" ", "-")) in ROUTING_TAGS
+    )
+
+
+def strip_routing_tags(text: str, *, enabled: bool = False) -> str:
+    """Remove recognized tags only after an integration explicitly opts in."""
+
+    if not enabled:
+        return text
+    return _TAG_PATTERN.sub(
+        lambda match: (
+            ""
+            if normalize_text(match.group(1)).replace(" ", "-") in ROUTING_TAGS
+            else match.group(0)
+        ),
+        text,
+    )
+
+
+def _matches(normalized_text: str, terms: tuple[str, ...]) -> float:
+    padded = f" {normalized_text} "
+    matches = sum(f" {normalize_text(term)} " in padded for term in terms)
+    return min(1.0, matches / 2)
+
+
+def _signal_scores(text: str, language_packs: tuple[LanguagePack, ...]) -> dict[str, float]:
+    normalized = normalize_text(text)
+    merged: dict[str, set[str]] = {name: set() for name in SIGNAL_NAMES}
+    for pack in language_packs:
+        for name, terms in pack.terms.items():
+            if name not in merged:
+                raise ValueError(f"unknown signal in language pack {pack.language}: {name}")
+            merged[name].update(terms)
+    return {name: _matches(normalized, tuple(terms)) for name, terms in merged.items()}
+
+
+def evaluate_task(
+    task: TaskContext, language_packs: tuple[LanguagePack, ...] = DEFAULT_LANGUAGE_PACKS
+) -> TaskSignals:
     text = f"{task.task}\n{task.relevant_context}"
-    complexity = _contains(
-        text, ("prove", "architecture", "root cause", "optimize", "strategy", "ambiguous")
-    )
-    debugging = _contains(text, ("bug", "debug", "failure", "regression", "crash", "investigate"))
-    cross = _contains(text, ("across", "multiple files", "migration", "refactor", "end-to-end"))
-    consequence = _contains(
-        text, ("production", "security", "financial", "medical", "legal", "irreversible")
-    )
-    mechanical = _contains(text, ("rename", "format", "typo", "copy", "sort", "mechanical"))
-    creative = _contains(text, ("design", "write", "brainstorm", "creative", "visual"))
-    ambiguity = _contains(text, ("maybe", "unclear", "unknown", "choose", "recommend"))
-    criteria = _contains(text, ("acceptance criteria", "must", "exactly", "test", "verify"))
-    coupling = max(cross, _contains(text, ("interdependent", "coupled", "integration", "protocol")))
-    verification = max(debugging, consequence, 0.2 if criteria else 0.5)
+    scores = _signal_scores(text, language_packs)
+    complexity = scores["complexity"]
+    debugging = scores["debugging"]
+    cross = scores["cross"]
+    consequence = scores["consequence"]
+    mechanical = scores["mechanical"]
+    creative = scores["creative"]
+    ambiguity = scores["ambiguity"]
+    criteria = scores["criteria"]
+    coupling = max(cross, scores["coupling"])
+
+    tags = parse_routing_tags(text) | {
+        normalize_text(tag).replace(" ", "-") for tag in task.routing_tags
+    }
+    if "mechanical" in tags:
+        mechanical = max(mechanical, 1.0)
+    if "debugging" in tags:
+        debugging = max(debugging, 1.0)
+    if "cross-cutting" in tags:
+        cross = max(cross, 1.0)
+        coupling = max(coupling, 1.0)
+    if "high-consequence" in tags:
+        consequence = max(consequence, 1.0)
+    if "creative" in tags:
+        creative = max(creative, 1.0)
+    if "ambiguous" in tags:
+        ambiguity = max(ambiguity, 1.0)
+    verification = max(debugging, consequence, 0.5 if criteria else 0.2)
+    if "strict-verification" in tags:
+        verification = max(verification, 1.0)
     context_need = (
         min(1.0, task.estimated_context_tokens / 200_000) if task.estimated_context_tokens else 0.2
     )

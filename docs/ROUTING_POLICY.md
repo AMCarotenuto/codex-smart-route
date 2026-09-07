@@ -20,3 +20,10 @@ priority, then a stable profile-ID hash, never alphabetical model order.
 
 Manual override precedes optimization but never bypasses hard gates. No eligible profile produces explicit error unless a configured fallback also passes every gate and quality floor.
 
+## Local multilingual evaluation
+
+The default evaluator is deterministic, local, and classifier-free. English and Italian vocabularies cover complexity, debugging, cross-cutting work, consequence, mechanical work, creativity, ambiguity, acceptance criteria, and coupling. Matching folds case and accents, treats punctuation as boundaries, and recognizes common inflections. It never uses prompt length as a difficulty proxy.
+
+Recognized language-neutral tags are `[mechanical]`, `[debugging]`, `[cross-cutting]`, `[high-consequence]`, `[creative]`, `[ambiguous]`, and `[strict-verification]`. They enrich routing signals but cannot bypass capability gates. Integrations may also pass the same values through `TaskContext.routing_tags`, avoiding prompt markup.
+
+Tags remain part of the downstream task by default. An integration may explicitly call `strip_routing_tags(text, enabled=True)` before forwarding; only recognized routing tags are removed. `LanguagePack` plus the optional `language_packs` argument to `evaluate_task` are the extension point for more languages. Vocabularies are heuristics: domain-specific phrasing, negation, and languages without a configured pack may need structured tags or the opt-in remote classifier.
