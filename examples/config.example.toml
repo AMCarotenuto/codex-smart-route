@@ -17,6 +17,7 @@ unknown_capabilities = "allow-unverified"
 
 [classifier]
 mode = "disabled"
+version = "1"
 timeout_seconds = 4.0
 max_output_bytes = 32768
 

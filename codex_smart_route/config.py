@@ -45,6 +45,7 @@ class ClassifierConfig:
     endpoint: str | None = None
     timeout_seconds: float = 4.0
     max_output_bytes: int = 32_768
+    version: str = "1"
 
 
 @dataclass(frozen=True)
@@ -278,6 +279,7 @@ def parse_config(raw: dict[str, Any]) -> RouterConfig:
     classifier = ClassifierConfig(
         mode=mode,
         model=classifier_raw.get("model"),
+        version=str(classifier_raw.get("version", "1")),
         endpoint=classifier_raw.get("endpoint"),
         timeout_seconds=float(classifier_raw.get("timeout_seconds", 4.0)),
         max_output_bytes=int(classifier_raw.get("max_output_bytes", 32_768)),
