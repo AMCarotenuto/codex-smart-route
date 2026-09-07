@@ -90,6 +90,7 @@ class TaskContext:
     environment_failure: bool = False
     force_reevaluation: bool = False
     recent_failures: tuple[str, ...] = ()
+    routing_tags: frozenset[str] = frozenset()
 
     @property
     def context_fingerprint(self) -> str:
@@ -97,6 +98,7 @@ class TaskContext:
             {
                 "task": self.task,
                 "context": self.relevant_context,
+                "routing_tags": sorted(self.routing_tags),
                 "modalities": sorted(self.required_modalities),
                 "tools": self.tools_required,
                 "parallel_tools": self.parallel_tools_required,
