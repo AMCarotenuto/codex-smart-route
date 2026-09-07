@@ -1,0 +1,21 @@
+name: Bug report
+description: Report reproducible routing or integration behavior
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Observed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Versions and redacted doctor output. Never include credentials or private prompts.
+
