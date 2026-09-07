@@ -153,9 +153,12 @@ class Router:
             gates.append("model-blocked")
         if self.config.allowed_reasoning and profile.effort not in self.config.allowed_reasoning:
             gates.append("reasoning-not-allowed")
-        if not task.required_modalities.issubset(cap.input_modalities):
-            gates.append("missing-input-modality")
         strict = self.config.unknown_capabilities == "exclude-required"
+        if cap.input_modalities:
+            if not task.required_modalities.issubset(cap.input_modalities):
+                gates.append("missing-input-modality")
+        elif strict and task.required_modalities:
+            gates.append("input-modality-unverified")
         if task.tools_required and (
             cap.supports_tools is False or strict and cap.supports_tools is None
         ):
