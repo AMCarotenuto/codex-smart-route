@@ -2,7 +2,7 @@
 name: codex-smart-route
 description: "Control an installed Codex Smart Route bridge: route model and reasoning, inspect status or decisions, change policy, set overrides, or run diagnostics. Do not activate for ordinary tasks when no routing control was requested."
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Codex Smart Route controls

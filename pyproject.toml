@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "codex-smart-route"
-version = "0.1.0"
+version = "0.2.0"
 description = "Automatic main-model and reasoning router for Codex"
 readme = "README.md"
 requires-python = ">=3.11"

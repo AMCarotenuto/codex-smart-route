@@ -402,7 +402,7 @@ def run_app_server_suite(
     proxy = JsonLineAppServerProxy(lambda _params: decision, executable=executable)
     with AppServerSession(executable, timeout) as session:
         session.send(
-            "initialize", {"clientInfo": {"name": "codex-smart-route-live", "version": "0.1.0"}}
+            "initialize", {"clientInfo": {"name": "codex-smart-route-live", "version": "0.2.0"}}
         )
         start_request = proxy.process_client_message(
             {
