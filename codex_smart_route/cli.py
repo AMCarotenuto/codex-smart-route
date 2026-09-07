@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Any, Literal, cast
 
 from . import __version__
 from .adapters import CodexCliAdapter, JsonLineAppServerProxy
-from .config import ConfigError, config_as_dict, default_config_path, default_home, load_config
+from .config import ConfigError, config_as_dict, resolve_config
 from .discovery import AppServerDiscovery, DiscoveryError, apply_overrides, capabilities_from_file
 from .doctor import run_doctor
 from .models import Decision, TaskContext
@@ -35,6 +36,8 @@ def _task(args: argparse.Namespace) -> str:
 def _catalog(args: argparse.Namespace, config: Any, *, enrich: bool = True) -> list[Any]:
     if args.catalog:
         models = capabilities_from_file(args.catalog)
+    elif config.catalog_strategy == "file":
+        models = capabilities_from_file(Path(config.catalog_path))
     else:
         models = AppServerDiscovery().discover()
     return apply_overrides(apply_priors(models), config) if enrich else models
@@ -75,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="smart-route", description="Automatic model + reasoning router for Codex"
     )
     parser.add_argument("--version", action="version", version=__version__)
-    parser.add_argument("--config-file", type=Path, default=default_config_path())
+    parser.add_argument("--config-file", type=Path)
     parser.add_argument("--json", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
     doctor = sub.add_parser("doctor")
@@ -115,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     override.add_argument("profile", nargs="?")
     sub.add_parser("reevaluate")
     config_cmd = sub.add_parser("config")
-    config_cmd.add_argument("action", choices=["validate", "show"])
+    config_cmd.add_argument("action", choices=["validate", "show", "sources"])
     cache = sub.add_parser("cache")
     cache.add_argument("action", choices=["clear"])
     logs = sub.add_parser("logs")
@@ -131,7 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
     uninstall.add_argument("--codex-home", type=Path)
     uninstall.add_argument("--dry-run", action="store_true")
     app_server = sub.add_parser("app-server")
-    app_server.add_argument("--catalog", type=Path, required=True)
+    app_server.add_argument("--catalog", type=Path)
     for command_parser in sub.choices.values():
         command_parser.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     return parser
@@ -140,8 +143,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        config = load_config(args.config_file)
-        home = default_home()
+        working_directory = args.cwd if args.command == "exec" and args.cwd else Path.cwd()
+        resolved = resolve_config(
+            working_directory=working_directory,
+            config_file=args.config_file,
+        )
+        config = resolved.config
+        home = resolved.runtime_home
         state_store = RuntimeState(home / "state.json")
         state = state_store.read()
         if args.command == "doctor":
@@ -156,6 +164,10 @@ def main(argv: list[str] | None = None) -> int:
                     args.codex_home,
                     skill_scope=scope,
                     repo=args.repo,
+                    config_sources=resolved.sources,
+                    project_root=resolved.project_root,
+                    project_id=resolved.project_id,
+                    state_directory=resolved.runtime_home,
                 )
             )
         elif args.command in {"models", "profiles"}:
@@ -168,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
             _json(rows)
         elif args.command in {"route", "exec"}:
             models = _catalog(args, config, enrich=False)
-            active_policy = state.get("policy", config.active_policy)
+            active_policy = state.get("policy") or config.active_policy
             if active_policy in config.policies:
                 config = type(config)(
                     **{
@@ -206,7 +218,21 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "reevaluate":
             _json(state_store.update(reevaluate_next=True))
         elif args.command == "config":
-            _json({"valid": True} if args.action == "validate" else config_as_dict(config))
+            if args.action == "validate":
+                _json({"valid": True})
+            elif args.action == "sources":
+                _json(
+                    {
+                        "sources": [dataclasses.asdict(source) for source in resolved.sources],
+                        "project_root": str(resolved.project_root)
+                        if resolved.project_root
+                        else None,
+                        "project_id": resolved.project_id,
+                        "state_directory": str(resolved.runtime_home),
+                    }
+                )
+            else:
+                _json(config_as_dict(config))
         elif args.command == "cache":
             models_path = Path("examples/capabilities.example.json")
             if models_path.exists():
@@ -223,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print("\n".join(lines))
         elif args.command == "app-server":
-            models = capabilities_from_file(args.catalog)
+            models = _catalog(args, config, enrich=False)
             service = RoutingService(config, models, home)
             tasks: dict[str, str] = {}
 

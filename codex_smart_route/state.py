@@ -106,7 +106,7 @@ class RuntimeState:
         if not self.path.exists():
             return {
                 "enabled": True,
-                "policy": "balanced",
+                "policy": None,
                 "manual_override": None,
                 "reevaluate_next": False,
             }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -66,6 +67,8 @@ class RouterConfig:
     log_enabled: bool = True
     log_redact: bool = True
     experimental_app_server: bool = False
+    catalog_strategy: str = "app-server"
+    catalog_path: str | None = None
 
     @property
     def policy(self) -> PolicyConfig:
@@ -89,6 +92,146 @@ def default_home() -> Path:
 
 def default_config_path() -> Path:
     return default_home() / "config.toml"
+
+
+REPOSITORY_CONFIG_NAME = ".codex-smart-route.toml"
+
+
+@dataclass(frozen=True)
+class ConfigSource:
+    kind: str
+    path: str | None
+
+
+@dataclass(frozen=True)
+class ResolvedConfig:
+    config: RouterConfig
+    sources: tuple[ConfigSource, ...]
+    project_root: Path | None
+    project_id: str | None
+    runtime_home: Path
+
+
+def find_project_root(start: Path) -> Path | None:
+    """Find enclosing Git root without invoking Git or reading repository contents."""
+    current = start.resolve()
+    if current.is_file():
+        current = current.parent
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def _repository_config(start: Path, project_root: Path | None) -> Path | None:
+    current = start.resolve()
+    if current.is_file():
+        current = current.parent
+    stop = project_root or current
+    while True:
+        candidate = current / REPOSITORY_CONFIG_NAME
+        if candidate.is_file():
+            return candidate
+        if current == stop or current.parent == current:
+            return None
+        current = current.parent
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(existing, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _read_toml(path: Path) -> dict[str, Any]:
+    try:
+        with path.open("rb") as handle:
+            raw = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ConfigError(f"cannot read config {path}: {exc}") from exc
+    catalog = raw.get("catalog")
+    if isinstance(catalog, dict) and isinstance(catalog.get("path"), str):
+        value = Path(catalog["path"])
+        if not value.is_absolute():
+            raw = _deep_merge(raw, {"catalog": {"path": str((path.parent / value).resolve())}})
+    return raw
+
+
+def _environment_layer(environ: dict[str, str]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    scalar = {
+        "CODEX_SMART_ROUTE_ACTIVE_POLICY": "active_policy",
+        "CODEX_SMART_ROUTE_CATALOG_STRATEGY": "catalog_strategy",
+        "CODEX_SMART_ROUTE_CATALOG_PATH": "catalog_path",
+    }
+    for variable, key in scalar.items():
+        if variable in environ:
+            if key.startswith("catalog_"):
+                result.setdefault("catalog", {})[key.removeprefix("catalog_")] = environ[variable]
+            else:
+                result[key] = environ[variable]
+    for variable, key in {
+        "CODEX_SMART_ROUTE_ALLOWED_MODELS": "allowed_models",
+        "CODEX_SMART_ROUTE_BLOCKED_MODELS": "blocked_models",
+        "CODEX_SMART_ROUTE_ALLOWED_REASONING": "allowed_reasoning",
+    }.items():
+        if variable in environ:
+            result[key] = [item.strip() for item in environ[variable].split(",") if item.strip()]
+    return result
+
+
+def resolve_config(
+    *,
+    working_directory: Path | None = None,
+    config_file: Path | None = None,
+    environ: dict[str, str] | None = None,
+    home: Path | None = None,
+) -> ResolvedConfig:
+    """Resolve deterministic config layers and repository-scoped runtime location."""
+    working = (working_directory or Path.cwd()).resolve()
+    router_home = (home or default_home()).resolve()
+    project_root = find_project_root(working)
+    sources = [ConfigSource("built-in", None)]
+    raw: dict[str, Any] = {}
+    if config_file is not None:
+        target = config_file.resolve()
+        raw = _read_toml(target)
+        sources.append(ConfigSource("explicit", str(target)))
+    else:
+        user_path = router_home / "config.toml"
+        if user_path.is_file():
+            raw = _deep_merge(raw, _read_toml(user_path))
+            sources.append(ConfigSource("user", str(user_path)))
+        repository_path = _repository_config(working, project_root)
+        if repository_path is not None:
+            raw = _deep_merge(raw, _read_toml(repository_path))
+            sources.append(ConfigSource("repository", str(repository_path)))
+        environment = _environment_layer(dict(os.environ if environ is None else environ))
+        environment_catalog = environment.get("catalog")
+        if isinstance(environment_catalog, dict) and isinstance(
+            environment_catalog.get("path"), str
+        ):
+            environment_path = Path(environment_catalog["path"])
+            if not environment_path.is_absolute():
+                environment = _deep_merge(
+                    environment,
+                    {"catalog": {"path": str((working / environment_path).resolve())}},
+                )
+        if environment:
+            raw = _deep_merge(raw, environment)
+            sources.append(ConfigSource("environment", None))
+    project_id = None
+    runtime_home = router_home
+    if project_root is not None:
+        normalized = os.path.normcase(str(project_root.resolve())).replace("\\", "/")
+        project_id = hashlib.sha256(normalized.encode()).hexdigest()[:16]
+        runtime_home = router_home / "projects" / project_id
+    return ResolvedConfig(parse_config(raw), tuple(sources), project_root, project_id, runtime_home)
 
 
 def _string_set(value: Any, name: str) -> frozenset[str]:
@@ -152,6 +295,17 @@ def parse_config(raw: dict[str, Any]) -> RouterConfig:
     overrides = raw.get("capability_overrides", {})
     if not isinstance(overrides, dict):
         raise ConfigError("capability_overrides must be a table")
+    catalog_raw = raw.get("catalog", {})
+    if not isinstance(catalog_raw, dict):
+        raise ConfigError("catalog must be a table")
+    catalog_strategy = str(catalog_raw.get("strategy", "app-server"))
+    if catalog_strategy not in {"app-server", "file"}:
+        raise ConfigError("catalog.strategy must be app-server or file")
+    catalog_path = catalog_raw.get("path")
+    if catalog_path is not None and not isinstance(catalog_path, str):
+        raise ConfigError("catalog.path must be a string")
+    if catalog_strategy == "file" and not catalog_path:
+        raise ConfigError("catalog.path is required when catalog.strategy is file")
     config = RouterConfig(
         version=int(raw.get("version", 1)),
         enabled=bool(raw.get("enabled", True)),
@@ -171,6 +325,8 @@ def parse_config(raw: dict[str, Any]) -> RouterConfig:
         log_enabled=bool(raw.get("logging", {}).get("enabled", True)),
         log_redact=bool(raw.get("logging", {}).get("redact", True)),
         experimental_app_server=bool(raw.get("experimental", {}).get("app_server", False)),
+        catalog_strategy=catalog_strategy,
+        catalog_path=catalog_path,
     )
     if config.cache_ttl_seconds < 1:
         raise ConfigError("cache_ttl_seconds must be positive")

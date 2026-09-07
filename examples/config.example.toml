@@ -10,6 +10,11 @@ blocked_models = []
 allowed_reasoning = []
 unknown_capabilities = "allow-unverified"
 
+# Default uses Codex App Server discovery. For persistent file discovery:
+# [catalog]
+# strategy = "file"
+# path = "local/capabilities.json"
+
 [classifier]
 mode = "disabled"
 timeout_seconds = 4.0

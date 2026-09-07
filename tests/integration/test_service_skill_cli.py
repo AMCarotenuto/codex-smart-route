@@ -158,6 +158,70 @@ def test_cli_route_json(config, catalog_path, tmp_path, monkeypatch, capsys):
     assert not (tmp_path / "audit.jsonl").exists()
 
 
+@pytest.mark.parametrize("command", ["models", "profiles", "route", "exec"])
+def test_cli_commands_use_configured_catalog(command, catalog_path, tmp_path, monkeypatch, capsys):
+    router_home = tmp_path / "router-home"
+    router_home.mkdir()
+    (router_home / "config.toml").write_text(
+        f'[catalog]\nstrategy = "file"\npath = "{catalog_path.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_SMART_ROUTE_HOME", str(router_home))
+    arguments = [command]
+    if command in {"route", "exec"}:
+        arguments.extend(["--task", "fix typo", "--dry-run"])
+
+    assert main(arguments) == 0
+    assert json.loads(capsys.readouterr().out)
+
+
+def test_cli_catalog_flag_overrides_configured_catalog(catalog_path, tmp_path, monkeypatch, capsys):
+    router_home = tmp_path / "router-home"
+    router_home.mkdir()
+    (router_home / "config.toml").write_text(
+        '[catalog]\nstrategy = "file"\npath = "missing.json"\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("CODEX_SMART_ROUTE_HOME", str(router_home))
+
+    assert main(["models", "--catalog", str(catalog_path)]) == 0
+    assert json.loads(capsys.readouterr().out)
+
+
+def test_cli_config_sources_and_doctor_show_project_identity(
+    catalog_path, tmp_path, monkeypatch, capsys
+):
+    router_home = tmp_path / "router-home"
+    router_home.mkdir()
+    (router_home / "config.toml").write_text(
+        f'[catalog]\nstrategy = "file"\npath = "{catalog_path.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    repo = tmp_path / "repo"
+    nested = repo / "src"
+    nested.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / ".codex-smart-route.toml").write_text('active_policy = "economy"')
+    monkeypatch.setenv("CODEX_SMART_ROUTE_HOME", str(router_home))
+    monkeypatch.chdir(nested)
+
+    assert main(["config", "sources"]) == 0
+    sources = json.loads(capsys.readouterr().out)
+    assert [item["kind"] for item in sources["sources"]] == [
+        "built-in",
+        "user",
+        "repository",
+    ]
+    assert sources["project_root"] == str(repo)
+    assert sources["project_id"]
+    assert sources["state_directory"].startswith(str(router_home / "projects"))
+
+    monkeypatch.setattr("codex_smart_route.doctor.shutil.which", lambda _: None)
+    assert main(["doctor", "--scope", "repo", "--repo", str(repo)]) == 0
+    doctor = json.loads(capsys.readouterr().out)
+    assert doctor["project_id"] == sources["project_id"]
+    assert doctor["config_sources"] == sources["sources"]
+
+
 def test_cross_platform_path_objects():
     windows_user = skill_root_path("user", PureWindowsPath("C:/Users/A"))
     windows_repo = skill_root_path("repo", PureWindowsPath("D:/src/project"))
