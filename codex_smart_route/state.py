@@ -7,6 +7,8 @@ import json
 import sqlite3
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -19,14 +21,20 @@ class DecisionCache:
         self.ttl_seconds = ttl_seconds
         self._lock = threading.RLock()
         path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as db:
+        with self._database() as db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS decisions "
                 "(cache_key TEXT PRIMARY KEY, created REAL NOT NULL, payload TEXT NOT NULL)"
             )
 
-    def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.path, timeout=5)
+    @contextmanager
+    def _database(self) -> Iterator[sqlite3.Connection]:
+        db = sqlite3.connect(self.path, timeout=5)
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
 
     @staticmethod
     def key(
@@ -50,7 +58,7 @@ class DecisionCache:
         )
 
     def get(self, key: str) -> Decision | None:
-        with self._lock, self._connect() as db:
+        with self._lock, self._database() as db:
             row = db.execute(
                 "SELECT created, payload FROM decisions WHERE cache_key = ?", (key,)
             ).fetchone()
@@ -72,14 +80,14 @@ class DecisionCache:
 
     def put(self, key: str, decision: Decision) -> None:
         payload = json.dumps(dataclasses.asdict(decision), separators=(",", ":"))
-        with self._lock, self._connect() as db:
+        with self._lock, self._database() as db:
             db.execute(
                 "INSERT OR REPLACE INTO decisions(cache_key, created, payload) VALUES (?, ?, ?)",
                 (key, time.time(), payload),
             )
 
     def clear(self) -> None:
-        with self._lock, self._connect() as db:
+        with self._lock, self._database() as db:
             db.execute("DELETE FROM decisions")
 
 

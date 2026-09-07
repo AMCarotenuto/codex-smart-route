@@ -37,6 +37,8 @@ def server():
     thread.start()
     yield instance
     instance.shutdown()
+    instance.server_close()
+    thread.join(timeout=1)
 
 
 def profiles():

@@ -50,7 +50,7 @@ def test_cache_round_trip(tmp_path):
 def test_cache_ttl(tmp_path):
     cache = DecisionCache(tmp_path / "cache.db", 1)
     cache.put("key", decision())
-    with cache._connect() as db:
+    with cache._database() as db:
         db.execute("UPDATE decisions SET created = ?", (time.time() - 2,))
     assert cache.get("key") is None
 
