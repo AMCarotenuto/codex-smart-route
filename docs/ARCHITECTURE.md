@@ -10,3 +10,6 @@
 
 Core has no transport, credential, RTK, Caveman, CaveCrew, scheduler, backlog, or subagent dependency.
 
+`config` deep-merges built-in, user, nearest repository, and environment layers. Explicit
+`--config-file` selects isolated single-file mode. Repository identity namespaces runtime state,
+cache, and audit below shared Smart Route home; CLI catalog flags override persistent catalog source.

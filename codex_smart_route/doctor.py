@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .config import RouterConfig, default_home
+from .config import ConfigSource, RouterConfig, default_home
 from .discovery import AppServerDiscovery, DiscoveryError
 from .skill_install import (
     SKILL_LOCATION_DOCS,
@@ -49,6 +49,10 @@ def run_doctor(
     skill_scope: SkillScope = "user",
     repo: Path | None = None,
     user_home: Path | None = None,
+    config_sources: tuple[ConfigSource, ...] = (),
+    project_root: Path | None = None,
+    project_id: str | None = None,
+    state_directory: Path | None = None,
 ) -> dict[str, Any]:
     home = default_home()
     actual_codex_home = codex_home or Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
@@ -89,7 +93,10 @@ def run_doctor(
         "skill_roots_version_basis": "current-official-documentation",
         "legacy_compatibility": legacy_status,
         "global_changes_required": False,
-        "state_directory": str(home),
+        "state_directory": str(state_directory or home),
+        "config_sources": [{"kind": source.kind, "path": source.path} for source in config_sources],
+        "project_root": str(project_root) if project_root else None,
+        "project_id": project_id,
         "models": [],
         "warnings": [],
     }

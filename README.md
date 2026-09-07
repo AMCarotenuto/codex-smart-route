@@ -67,7 +67,11 @@ Experimental App Server integration patches `model` and `effort` on `turn/start`
 - `balanced`: initial `0.50/0.30/0.10/0.10` weights, quality floor `0.70`.
 - `quality`: stronger residual-quality preference, quality floor `0.82`.
 
-Change future decisions with `smart-route policy economy|balanced|quality`. Custom policies live in `~/.codex-smart-route/config.toml`. Scores are operational estimates, not calibrated probabilities. Missing relative metrics use disclosed effort heuristics and make decision unverified.
+Change future decisions with `smart-route policy economy|balanced|quality`. User policies live in
+`~/.codex-smart-route/config.toml`; repository overrides use nearest `.codex-smart-route.toml`.
+Inspect effective layers with `smart-route config sources`. Scores are operational estimates, not
+calibrated probabilities. Missing relative metrics use disclosed effort heuristics and make decision
+unverified.
 
 ## CLI
 
@@ -85,7 +89,7 @@ smart-route enable | disable
 smart-route policy economy|balanced|quality
 smart-route override [MODEL@EFFORT]
 smart-route reevaluate
-smart-route config validate | show
+smart-route config validate | show | sources
 smart-route cache clear
 smart-route logs
 smart-route install-skill --scope user|repo|legacy
