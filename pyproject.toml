@@ -22,7 +22,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["build>=1.2,<2", "mypy>=1.15,<2", "pytest>=8.3,<9", "pytest-cov>=6,<7", "ruff>=0.11,<1"]
+dev = ["build>=1.2,<2", "mypy>=1.15,<3", "pytest>=8.3,<9", "pytest-cov>=6,<7", "ruff>=0.11,<1"]
 
 [project.scripts]
 smart-route = "codex_smart_route.cli:main"
