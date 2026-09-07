@@ -19,4 +19,4 @@ Use installed `smart-route` CLI. Engine and adapter perform model changes; never
 
 For actual routed execution, use `smart-route exec --task "..."`. This applies both `model` and `model_reasoning_effort` before starting `codex exec`. Do not launch paid/remote classification or live inference unless user explicitly requests execution.
 
-Never delegate routing to subagents, edit global `AGENTS.md`, inspect credentials, or modify unrelated Codex/RTK/Caveman/CaveCrew configuration. Install and removal use `smart-route install-skill` and `smart-route uninstall-skill`.
+Never delegate routing to subagents, edit global `AGENTS.md`, inspect credentials, or modify unrelated Codex/RTK/Caveman/CaveCrew configuration. Install and removal use explicit scopes, for example `smart-route install-skill --scope user` and `smart-route uninstall-skill --scope user`.

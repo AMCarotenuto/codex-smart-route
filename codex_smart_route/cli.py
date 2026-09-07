@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -17,7 +16,7 @@ from .doctor import run_doctor
 from .models import Decision, TaskContext
 from .priors import apply_priors
 from .service import RoutingService
-from .skill_install import SkillInstallError, install_skill, uninstall_skill
+from .skill_install import SkillInstallError, SkillScope, install_skill, uninstall_skill
 from .state import RuntimeState
 
 
@@ -79,7 +78,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config-file", type=Path, default=default_config_path())
     parser.add_argument("--json", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("doctor")
+    doctor = sub.add_parser("doctor")
+    doctor.add_argument("--scope", choices=["user", "repo", "legacy"], default="user")
+    doctor.add_argument("--repo", type=Path)
+    doctor.add_argument("--codex-home", type=Path)
     sub.add_parser("models").add_argument("--catalog", type=Path)
     sub.add_parser("profiles").add_argument("--catalog", type=Path)
     route = sub.add_parser("route")
@@ -119,9 +121,13 @@ def build_parser() -> argparse.ArgumentParser:
     logs = sub.add_parser("logs")
     logs.add_argument("--limit", type=int, default=20)
     install = sub.add_parser("install-skill")
+    install.add_argument("--scope", choices=["user", "repo", "legacy"], default="user")
+    install.add_argument("--repo", type=Path)
     install.add_argument("--codex-home", type=Path)
     install.add_argument("--dry-run", action="store_true")
     uninstall = sub.add_parser("uninstall-skill")
+    uninstall.add_argument("--scope", choices=["user", "repo", "legacy"], default="user")
+    uninstall.add_argument("--repo", type=Path)
     uninstall.add_argument("--codex-home", type=Path)
     uninstall.add_argument("--dry-run", action="store_true")
     app_server = sub.add_parser("app-server")
@@ -139,7 +145,19 @@ def main(argv: list[str] | None = None) -> int:
         state_store = RuntimeState(home / "state.json")
         state = state_store.read()
         if args.command == "doctor":
-            _json(run_doctor(config))
+            scope = cast(SkillScope, args.scope)
+            if args.repo is not None and scope != "repo":
+                raise ConfigError("--repo is valid only with --scope repo")
+            if args.codex_home is not None and scope != "legacy":
+                raise ConfigError("--codex-home is valid only with --scope legacy")
+            _json(
+                run_doctor(
+                    config,
+                    args.codex_home,
+                    skill_scope=scope,
+                    repo=args.repo,
+                )
+            )
         elif args.command in {"models", "profiles"}:
             models = _catalog(args, config)
             rows = (
@@ -232,14 +250,31 @@ def main(argv: list[str] | None = None) -> int:
 
             return JsonLineAppServerProxy(route_turn, auto_slug=config.auto_slug).run()
         elif args.command in {"install-skill", "uninstall-skill"}:
-            codex_home = args.codex_home or Path(
-                os.environ.get("CODEX_HOME", Path.home() / ".codex")
-            )
+            scope = cast(SkillScope, args.scope)
+            if args.repo is not None and scope != "repo":
+                raise ConfigError("--repo is valid only with --scope repo")
+            if args.codex_home is not None and scope != "legacy":
+                raise ConfigError("--codex-home is valid only with --scope legacy")
             if args.command == "install-skill":
                 source = Path(__file__).resolve().parent / "bundled_skill"
-                _json(install_skill(source, codex_home, args.dry_run))
+                _json(
+                    install_skill(
+                        source,
+                        args.dry_run,
+                        scope=scope,
+                        repo=args.repo,
+                        codex_home=args.codex_home,
+                    )
+                )
             else:
-                _json(uninstall_skill(codex_home, args.dry_run))
+                _json(
+                    uninstall_skill(
+                        args.dry_run,
+                        scope=scope,
+                        repo=args.repo,
+                        codex_home=args.codex_home,
+                    )
+                )
         return 0
     except (
         ConfigError,
