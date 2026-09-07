@@ -1,0 +1,5 @@
+interface:
+  display_name: "Codex Smart Route"
+  short_description: "Control model and reasoning routing"
+  default_prompt: "Use $codex-smart-route to inspect routing status and explain the latest decision."
+
