@@ -25,6 +25,12 @@ flowchart LR
 
 ## Quick start
 
+For reproducible public installation, download wheel plus `SHA256SUMS` from a GitHub prerelease,
+verify checksum, then install with `pipx`, a virtual environment, or direct wheel path. Package
+installation never changes Codex configuration or installs the skill. See
+[releases and installation](docs/RELEASING.md) for exact install, upgrade, rollback, skill removal,
+and package removal commands.
+
 Windows PowerShell:
 
 ```powershell
