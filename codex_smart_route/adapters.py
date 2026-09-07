@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -14,6 +15,48 @@ from .models import Decision
 from .router import RoutingError, mark_forwarded
 
 AUTO_SLUG = "codex-smart-route"
+
+_VALUE_OPTIONS = frozenset(
+    {
+        "-c",
+        "--config",
+        "--enable",
+        "--disable",
+        "-i",
+        "--image",
+        "--local-provider",
+        "-p",
+        "--profile",
+        "-s",
+        "--sandbox",
+        "-C",
+        "--cd",
+        "--add-dir",
+        "--thread-source",
+        "--ask-for-approval",
+        "--output-schema",
+        "--color",
+        "-o",
+        "--output-last-message",
+    }
+)
+_FLAG_OPTIONS = frozenset(
+    {
+        "--strict-config",
+        "--oss",
+        "--approve-for-me",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--dangerously-bypass-hook-trust",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--json",
+        "--search",
+    }
+)
+_ROUTING_OPTIONS = frozenset({"-m", "--model"})
+_HELP_OPTION = re.compile(r"(?<!\S)(--[a-z][a-z0-9-]*|-[A-Za-z])(?:[ ,=]|$)", re.MULTILINE)
 
 
 def patch_responses_request(
@@ -52,8 +95,63 @@ def patch_turn_start(params: dict[str, Any], decision: Decision) -> dict[str, An
 class CodexCliAdapter:
     """Official CLI adapter: applies both flags before `codex exec` starts."""
 
-    def __init__(self, executable: str = "codex"):
+    def __init__(self, executable: str = "codex", supported_options: frozenset[str] | None = None):
         self.executable = executable
+        self._supported_options = supported_options
+
+    def supported_options(self, resume: bool = False) -> frozenset[str]:
+        if self._supported_options is not None:
+            return self._supported_options
+        command = [self.executable, "exec"]
+        if resume:
+            command.append("resume")
+        command.append("--help")
+        completed = subprocess.run(  # noqa: S603
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if completed.returncode != 0:
+            raise RoutingError(
+                f"cannot inspect supported Codex flags (exit {completed.returncode})"
+            )
+        return frozenset(_HELP_OPTION.findall(completed.stdout))
+
+    def validate_extra_args(self, extra_args: tuple[str, ...], resume: bool = False) -> None:
+        supported = self.supported_options(resume) if extra_args else frozenset()
+        index = 0
+        while index < len(extra_args):
+            token = extra_args[index]
+            option, has_inline_value, inline_value = token.partition("=")
+            if option in _ROUTING_OPTIONS:
+                raise RoutingError(f"{option} is controlled by Smart Route; use --profile")
+            if option not in _VALUE_OPTIONS and option not in _FLAG_OPTIONS:
+                raise RoutingError(f"unsupported Codex pass-through argument: {token}")
+            if option not in supported:
+                mode = "codex exec resume" if resume else "codex exec"
+                raise RoutingError(f"installed {mode} does not support {option}")
+            if option in _FLAG_OPTIONS:
+                if has_inline_value:
+                    raise RoutingError(f"{option} does not accept a value")
+                index += 1
+                continue
+            if has_inline_value:
+                value = inline_value
+            else:
+                index += 1
+                if index >= len(extra_args):
+                    raise RoutingError(f"{option} requires a value")
+                value = extra_args[index]
+                if value.startswith("-"):
+                    raise RoutingError(f"{option} value cannot start with '-'; use {option}=VALUE")
+            if option in {"-c", "--config"}:
+                key = value.split("=", 1)[0].strip()
+                if key in {"model", "model_reasoning_effort"}:
+                    raise RoutingError(f"config key {key} is controlled by Smart Route")
+            index += 1
 
     def command(
         self,
@@ -61,6 +159,7 @@ class CodexCliAdapter:
         task: str,
         cwd: Path | None = None,
         extra_args: tuple[str, ...] = (),
+        resume_session: str | None = None,
     ) -> list[str]:
         if (
             decision.status != "selected"
@@ -68,17 +167,27 @@ class CodexCliAdapter:
             or not decision.selected_reasoning_effort
         ):
             raise RoutingError("blocked route cannot execute")
-        command = [
-            self.executable,
-            "exec",
-            "-m",
-            decision.selected_model,
-            "-c",
-            f'model_reasoning_effort="{decision.selected_reasoning_effort}"',
-        ]
+        self.validate_extra_args(extra_args, resume=resume_session is not None)
+        if resume_session is not None and not resume_session.strip():
+            raise RoutingError("resume requires an explicit session identity")
+        if resume_session is not None and cwd is not None:
+            raise RoutingError("--cwd is not supported with resume; resume uses session workspace")
+        command = [self.executable, "exec"]
+        if resume_session is not None:
+            command.append("resume")
+        command.extend(extra_args)
+        command.extend(
+            [
+                "-m",
+                decision.selected_model,
+                "-c",
+                f'model_reasoning_effort="{decision.selected_reasoning_effort}"',
+            ]
+        )
         if cwd:
             command.extend(["-C", str(cwd)])
-        command.extend(extra_args)
+        if resume_session is not None:
+            command.append(resume_session)
         command.append(task)
         return command
 
@@ -88,8 +197,9 @@ class CodexCliAdapter:
         task: str,
         cwd: Path | None = None,
         extra_args: tuple[str, ...] = (),
+        resume_session: str | None = None,
     ) -> tuple[int, Decision]:
-        command = self.command(decision, task, cwd, extra_args)
+        command = self.command(decision, task, cwd, extra_args, resume_session)
         completed = subprocess.run(command, check=False)  # noqa: S603
         return completed.returncode, mark_forwarded(decision)
 

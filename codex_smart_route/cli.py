@@ -30,7 +30,17 @@ def _task(args: argparse.Namespace) -> str:
         return cast(str, args.task)
     if args.task_file is not None:
         return cast(Path, args.task_file).read_text(encoding="utf-8")
-    raise ConfigError("route requires --task or --task-file")
+    if args.command == "exec" and not sys.stdin.isatty():
+        task = sys.stdin.read()
+        if task:
+            return task
+    suffix = ", or piped stdin" if args.command == "exec" else ""
+    raise ConfigError(f"{args.command} requires --task or --task-file{suffix}")
+
+
+def _codex_args(args: argparse.Namespace) -> tuple[str, ...]:
+    values = tuple(getattr(args, "codex_args", ()))
+    return values[1:] if values[:1] == ("--",) else values
 
 
 def _catalog(args: argparse.Namespace, config: Any, *, enrich: bool = True) -> list[Any]:
@@ -45,19 +55,27 @@ def _catalog(args: argparse.Namespace, config: Any, *, enrich: bool = True) -> l
 
 def _context(args: argparse.Namespace, state: dict[str, Any]) -> TaskContext:
     task = _task(args)
-    modalities = frozenset(["text", "image"] if args.image else ["text"])
+    has_forwarded_image = any(
+        value in {"-i", "--image"} or value.startswith("--image=") for value in _codex_args(args)
+    )
+    modalities = frozenset(["text", "image"] if args.image or has_forwarded_image else ["text"])
+    resume = getattr(args, "resume", None)
+    reevaluate_resume = bool(getattr(args, "reevaluate_resume", False))
+    manual_profile = args.profile or state.get("manual_override")
+    if resume and not reevaluate_resume:
+        manual_profile = manual_profile or args.current_profile
     return TaskContext(
         task=task,
-        session_id=args.session,
+        session_id=resume or args.session,
         task_id=args.task_id,
         phase_id=args.phase,
-        event=args.event,
+        event="continuation" if resume else args.event,
         required_modalities=modalities,
         tools_required=args.tools,
         estimated_context_tokens=args.context_tokens,
-        manual_profile=args.profile or state.get("manual_override"),
+        manual_profile=manual_profile,
         current_profile=args.current_profile,
-        force_reevaluation=bool(state.get("reevaluate_next")),
+        force_reevaluation=bool(state.get("reevaluate_next")) or reevaluate_resume,
     )
 
 
@@ -90,8 +108,9 @@ def build_parser() -> argparse.ArgumentParser:
     route = sub.add_parser("route")
     execute = sub.add_parser("exec")
     for command in (route, execute):
-        command.add_argument("--task")
-        command.add_argument("--task-file", type=Path)
+        task_input = command.add_mutually_exclusive_group()
+        task_input.add_argument("--task")
+        task_input.add_argument("--task-file", type=Path)
         command.add_argument("--catalog", type=Path)
         command.add_argument("--session", default="local")
         command.add_argument("--task-id", default="task")
@@ -108,6 +127,9 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--current-profile")
         command.add_argument("--dry-run", action="store_true")
     execute.add_argument("--cwd", type=Path)
+    execute.add_argument("--resume", metavar="SESSION_ID")
+    execute.add_argument("--reevaluate-resume", action="store_true")
+    execute.add_argument("codex_args", nargs=argparse.REMAINDER)
     sub.add_parser("explain")
     sub.add_parser("status")
     sub.add_parser("enable")
@@ -179,6 +201,13 @@ def main(argv: list[str] | None = None) -> int:
             )
             _json(rows)
         elif args.command in {"route", "exec"}:
+            if args.command == "exec" and args.resume:
+                if args.cwd is not None:
+                    raise ConfigError("--cwd cannot be used with --resume")
+                if not args.reevaluate_resume and not (args.current_profile or args.profile):
+                    raise ConfigError(
+                        "--resume requires --current-profile/--profile, or --reevaluate-resume"
+                    )
             models = _catalog(args, config, enrich=False)
             active_policy = state.get("policy") or config.active_policy
             if active_policy in config.policies:
@@ -194,9 +223,14 @@ def main(argv: list[str] | None = None) -> int:
             decision = service.route(context, dry_run=args.dry_run)
             if state.get("reevaluate_next") and not args.dry_run:
                 state_store.update(reevaluate_next=False)
-            _json(decision.to_dict())
+            if args.command == "route" or args.dry_run:
+                _json(decision.to_dict())
+            if args.command == "exec" and args.dry_run:
+                CodexCliAdapter().validate_extra_args(_codex_args(args), args.resume is not None)
             if args.command == "exec" and not args.dry_run:
-                code, forwarded = CodexCliAdapter().run(decision, context.task, args.cwd)
+                code, forwarded = CodexCliAdapter().run(
+                    decision, context.task, args.cwd, _codex_args(args), args.resume
+                )
                 service.audit.decision(context, forwarded)
                 return code
             return 0 if decision.status == "selected" else 2

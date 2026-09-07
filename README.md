@@ -81,7 +81,8 @@ smart-route models [--catalog FILE]
 smart-route profiles [--catalog FILE]
 smart-route route --task TEXT [--dry-run] [--json]
 smart-route route --task-file FILE
-smart-route exec --task TEXT
+smart-route exec --task TEXT [-- CODEX_EXEC_ARGS...]
+smart-route exec --resume SESSION_ID --current-profile MODEL@EFFORT --task TEXT
 smart-route app-server --catalog FILE
 smart-route explain
 smart-route status
