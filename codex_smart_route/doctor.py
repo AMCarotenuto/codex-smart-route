@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .compatibility import compatibility_matrix, detect_integrations
 from .config import ConfigSource, RouterConfig, default_home
 from .discovery import AppServerDiscovery, DiscoveryError
 from .skill_install import (
@@ -101,6 +102,19 @@ def run_doctor(
         "app_server_protocol": None,
         "warnings": [],
     }
+    compatibility = detect_integrations(
+        config_enabled=config.enabled,
+        adapter=config.adapter,
+        auto_slug=config.auto_slug,
+        project_root=project_root,
+        user_home=actual_user_home,
+        which=shutil.which,
+    )
+    report["compatibility"] = {
+        **compatibility,
+        "matrix": compatibility_matrix(),
+    }
+    report["warnings"].extend(compatibility["warnings"])
     if discover and report["codex_executable"]:
         try:
             discovery = AppServerDiscovery()
