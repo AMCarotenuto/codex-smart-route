@@ -85,6 +85,7 @@ smart-route exec --task TEXT [-- CODEX_EXEC_ARGS...]
 smart-route exec --resume SESSION_ID --current-profile MODEL@EFFORT --task TEXT
 smart-route app-server --catalog FILE
 smart-route explain
+smart-route explain --json
 smart-route status
 smart-route enable | disable
 smart-route policy economy|balanced|quality
@@ -143,6 +144,8 @@ python -m pip uninstall codex-smart-route
 ```
 
 Optionally remove `~/.codex-smart-route` after reviewing redacted audit and cache files.
+Audit schema, privacy contract, and bounded retention are documented in
+[Decision audit and explain](docs/AUDIT_SCHEMA.md).
 
 ## Contributing
 

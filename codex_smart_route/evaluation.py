@@ -13,6 +13,8 @@ from typing import Protocol
 from .config import ClassifierConfig
 from .models import ModelProfile, TaskContext, TaskSignals
 
+LOCAL_EVALUATOR_VERSION = "1"
+
 
 class ClassifierError(RuntimeError):
     pass

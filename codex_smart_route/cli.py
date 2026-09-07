@@ -11,6 +11,7 @@ from typing import Any, Literal, cast
 
 from . import __version__
 from .adapters import CodexCliAdapter, JsonLineAppServerProxy
+from .audit import format_explanation, latest_event
 from .config import ConfigError, config_as_dict, resolve_config
 from .discovery import AppServerDiscovery, DiscoveryError, apply_overrides, capabilities_from_file
 from .doctor import run_doctor
@@ -236,11 +237,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if decision.status == "selected" else 2
         elif args.command == "explain":
             path = home / "audit.jsonl"
-            print(
-                path.read_text(encoding="utf-8").splitlines()[-1]
-                if path.exists()
-                else "No decision recorded."
-            )
+            event = latest_event(path)
+            if event is None:
+                print("No decision recorded.")
+            elif args.json:
+                _json(event)
+            else:
+                print(format_explanation(event))
         elif args.command == "status":
             _json(state)
         elif args.command in {"enable", "disable"}:
@@ -284,7 +287,9 @@ def main(argv: list[str] | None = None) -> int:
             print("\n".join(lines))
         elif args.command == "app-server":
             models = _catalog(args, config, enrich=False)
-            service = RoutingService(config, models, home)
+            service = RoutingService(
+                dataclasses.replace(config, adapter="app-server"), models, home
+            )
             tasks: dict[str, str] = {}
 
             def route_turn(params: dict[str, Any]) -> Decision:

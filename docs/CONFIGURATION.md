@@ -68,7 +68,7 @@ Copy `examples/config.example.toml` as starting point.
 
 ## Fields
 
-Top-level fields select policy, Auto slug, adapter, cache TTL, hysteresis, model/reasoning allowlists and blocklists, explicit fallback, unknown-capability behavior, logging, and experimental App Server support. `policies.<name>` supports custom normalized weights, quality floor, and version. `capability_overrides."MODEL"` may set only fields defined by `ModelCapability`.
+Top-level fields select policy, Auto slug, adapter, cache TTL, hysteresis, model/reasoning allowlists and blocklists, explicit fallback, unknown-capability behavior, logging, and experimental App Server support. `logging.max_bytes` and `logging.backup_count` bound audit retention; see [Decision audit and explain](AUDIT_SCHEMA.md). `policies.<name>` supports custom normalized weights, quality floor, and version. `capability_overrides."MODEL"` may set only fields defined by `ModelCapability`.
 
 Repository catalog values override bundled family priors; `capability_overrides."MODEL"` in the
 selected user config override both. Prior fields include relative metrics, `prior_strengths`,

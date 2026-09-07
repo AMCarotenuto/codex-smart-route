@@ -110,6 +110,7 @@ class Router:
             key=lambda item: (item.penalty, -item.tie_break_priority, item.tie_break_key)
         )
         winner = candidates[0]
+        hysteresis_applied = False
         if (
             task.current_profile
             and task.current_profile != winner.profile_id
@@ -120,6 +121,7 @@ class Router:
             )
             if current and current.penalty - winner.penalty < self.config.switch_hysteresis:
                 winner = current
+                hysteresis_applied = True
         profile = next(item for item in profiles if item.id == winner.profile_id)
         return Decision(
             "selected",
@@ -138,6 +140,8 @@ class Router:
             verified=winner.verified,
             policy_name=self.config.active_policy,
             policy_version=self.config.policy.version,
+            hysteresis_applied=hysteresis_applied,
+            previous_profile=task.current_profile,
         )
 
     def _gates(self, task: TaskContext, profile: ModelProfile) -> list[str]:
@@ -227,6 +231,7 @@ class Router:
             profile.effort,
             profile.id,
             profile.model,
+            requested_reasoning_effort=profile.effort,
             candidates=tuple(candidates),
             excluded=excluded,
             hard_gates=self._all_gates(excluded),
@@ -235,6 +240,7 @@ class Router:
             verified=profile.capability.confidence == "verified",
             policy_name=self.config.active_policy,
             policy_version=self.config.policy.version,
+            previous_profile=task.current_profile,
         )
 
     def _explicit_fallback(

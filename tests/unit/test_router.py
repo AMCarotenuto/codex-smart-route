@@ -98,6 +98,7 @@ def test_manual_override_wins(config, catalog):
     profile = catalog[-1].profiles()[-1]
     decision = route(config, catalog, TaskContext("typo", manual_profile=profile.id))
     assert decision.selected_profile == profile.id
+    assert decision.requested_reasoning_effort == profile.effort
     assert decision.reason == "explicit manual override"
 
 
@@ -133,15 +134,17 @@ def test_explicit_fallback_still_meets_quality(catalog):
 
 def test_hysteresis_preserves_current(config, catalog):
     profiles = tuple(profile for model in catalog for profile in model.profiles())
-    current = profiles[0]
+    current = profiles[-1]
     scores = {profile.id: (0.9, 0.9) for profile in profiles}
-    decision = Router(config).route(
+    decision = Router(replace(config, switch_hysteresis=1.0)).route(
         TaskContext("Task", current_profile=current.id),
         profiles,
         evaluate_task(TaskContext("Task")),
         scores,
     )
     assert decision.selected_profile == current.id
+    assert decision.hysteresis_applied is True
+    assert decision.previous_profile == current.id
 
 
 def test_significant_failure_disables_hysteresis(config, catalog):
@@ -155,6 +158,8 @@ def test_significant_failure_disables_hysteresis(config, catalog):
         scores,
     )
     assert decision.selected_profile != current.id
+    assert decision.hysteresis_applied is False
+    assert decision.previous_profile == current.id
 
 
 def test_environment_failure_does_not_raise_difficulty():
