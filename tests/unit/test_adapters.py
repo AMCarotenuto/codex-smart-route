@@ -98,3 +98,86 @@ def test_virtual_model_capabilities_derive_from_catalog():
     assert auto["model"] == "codex-smart-route"
     assert auto["inputModalities"] == ["image", "text"]
     assert auto["supportedReasoningEfforts"][0]["reasoningEffort"] == "high"
+
+
+def test_model_less_turn_on_non_auto_thread_passes_through():
+    proxy = JsonLineAppServerProxy(lambda _params: decision())
+    message = {"id": 2, "method": "turn/start", "params": {"threadId": "manual"}}
+    assert proxy.process_client_message(message) == message
+
+
+def test_auto_thread_is_correlated_and_routed_without_leaking_to_manual_thread():
+    proxy = JsonLineAppServerProxy(lambda _params: decision())
+    start = {"id": 1, "method": "thread/start", "params": {"model": "codex-smart-route"}}
+    assert "model" not in proxy.process_client_message(start)["params"]
+    proxy.observe_server_message({"id": 1, "result": {"thread": {"id": "auto"}}})
+
+    auto_turn = proxy.process_client_message(
+        {"id": 2, "method": "turn/start", "params": {"threadId": "auto"}}
+    )
+    manual_turn = {"id": 3, "method": "turn/start", "params": {"threadId": "manual"}}
+    assert auto_turn["params"]["model"] == "future-model"
+    assert auto_turn["params"]["effort"] == "high"
+    assert proxy.process_client_message(manual_turn) == manual_turn
+
+
+def test_manual_model_disables_auto_and_lifecycle_cleans_state():
+    proxy = JsonLineAppServerProxy(lambda _params: decision())
+    proxy.process_client_message(
+        {
+            "id": 1,
+            "method": "turn/start",
+            "params": {"threadId": "thread", "model": "codex-smart-route"},
+        }
+    )
+    manual = {
+        "id": 2,
+        "method": "turn/start",
+        "params": {"threadId": "thread", "model": "manual"},
+    }
+    assert proxy.process_client_message(manual) == manual
+    model_less = {"id": 3, "method": "turn/start", "params": {"threadId": "thread"}}
+    assert proxy.process_client_message(model_less) == model_less
+
+    proxy.process_client_message(
+        {
+            "id": 4,
+            "method": "turn/start",
+            "params": {"threadId": "thread", "model": "codex-smart-route"},
+        }
+    )
+    proxy.observe_server_message({"method": "thread/closed", "params": {"threadId": "thread"}})
+    assert proxy.process_client_message(model_less) == model_less
+
+
+@pytest.mark.parametrize("method", ["turn/interrupt", "thread/compact/start", "item/tool/call"])
+def test_non_routing_protocol_messages_pass_unchanged(method):
+    proxy = JsonLineAppServerProxy(lambda _params: decision())
+    message = {"method": method, "params": {"threadId": "missing", "value": [1, 2]}}
+    assert proxy.process_client_message(message) == message
+
+
+def test_explicit_auto_without_thread_id_routes_once_but_does_not_enable_global_auto():
+    proxy = JsonLineAppServerProxy(lambda _params: decision())
+    explicit = {
+        "id": 1,
+        "method": "turn/start",
+        "params": {"model": "codex-smart-route"},
+    }
+    assert proxy.process_client_message(explicit)["params"]["model"] == "future-model"
+    implicit = {"id": 2, "method": "turn/start", "params": {}}
+    assert proxy.process_client_message(implicit) == implicit
+
+
+def test_shutdown_without_params_clears_auto_state():
+    proxy = JsonLineAppServerProxy(lambda _params: decision())
+    proxy.process_client_message(
+        {
+            "method": "turn/start",
+            "params": {"threadId": "thread", "model": "codex-smart-route"},
+        }
+    )
+    shutdown = {"id": 9, "method": "shutdown"}
+    assert proxy.process_client_message(shutdown) == shutdown
+    model_less = {"method": "turn/start", "params": {"threadId": "thread"}}
+    assert proxy.process_client_message(model_less) == model_less

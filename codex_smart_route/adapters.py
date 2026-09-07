@@ -107,6 +107,9 @@ class JsonLineAppServerProxy:
         self.executable = executable
         self.auto_slug = auto_slug
         self._model_list_ids: set[Any] = set()
+        self._pending_auto_starts: set[Any] = set()
+        self._auto_threads: set[str] = set()
+        self._state_lock = threading.RLock()
 
     def run(self, source: TextIO = sys.stdin, sink: TextIO = sys.stdout) -> int:
         child = subprocess.Popen(  # noqa: S603
@@ -129,6 +132,7 @@ class JsonLineAppServerProxy:
                     if message.get("id") in self._model_list_ids:
                         message = self.inject_auto_model(message)
                         output = json.dumps(message, separators=(",", ":")) + "\n"
+                    self.observe_server_message(message)
                 except (json.JSONDecodeError, AttributeError):
                     pass
                 sink.write(output)
@@ -142,16 +146,7 @@ class JsonLineAppServerProxy:
                 method = message.get("method")
                 if method == "model/list" and "id" in message:
                     self._model_list_ids.add(message["id"])
-                if (
-                    method == "thread/start"
-                    and message.get("params", {}).get("model") == self.auto_slug
-                ):
-                    message["params"].pop("model", None)
-                elif method == "turn/start":
-                    params = message.get("params", {})
-                    if params.get("model") == self.auto_slug or params.get("model") is None:
-                        decision = self.route_callback(params)
-                        message["params"] = patch_turn_start(params, decision)
+                message = self.process_client_message(message)
                 child.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
                 child.stdin.flush()
         except (BrokenPipeError, json.JSONDecodeError) as exc:
@@ -162,6 +157,80 @@ class JsonLineAppServerProxy:
             child.wait()
             output_thread.join(timeout=2)
         return child.returncode
+
+    def process_client_message(self, message: dict[str, Any]) -> dict[str, Any]:
+        """Route only explicit Auto turns or turns owned by an Auto thread."""
+        result = copy.deepcopy(message)
+        method = result.get("method")
+        if method == "shutdown":
+            with self._state_lock:
+                self._auto_threads.clear()
+                self._pending_auto_starts.clear()
+            return result
+        params = result.get("params")
+        if not isinstance(params, dict):
+            return result
+        thread_id = params.get("threadId")
+        valid_thread_id = thread_id if isinstance(thread_id, str) and thread_id else None
+
+        if method == "thread/start" and params.get("model") == self.auto_slug:
+            request_id = result.get("id")
+            if request_id is not None:
+                with self._state_lock:
+                    self._pending_auto_starts.add(request_id)
+            params.pop("model", None)
+        elif method == "thread/resume":
+            model = params.get("model")
+            if model == self.auto_slug:
+                if valid_thread_id:
+                    with self._state_lock:
+                        self._auto_threads.add(valid_thread_id)
+                params.pop("model", None)
+            elif model is not None and valid_thread_id:
+                with self._state_lock:
+                    self._auto_threads.discard(valid_thread_id)
+        elif method == "turn/start":
+            model = params.get("model")
+            if model == self.auto_slug:
+                if valid_thread_id:
+                    with self._state_lock:
+                        self._auto_threads.add(valid_thread_id)
+                result["params"] = patch_turn_start(params, self.route_callback(params))
+            elif model is not None:
+                if valid_thread_id:
+                    with self._state_lock:
+                        self._auto_threads.discard(valid_thread_id)
+            elif valid_thread_id:
+                with self._state_lock:
+                    auto_enabled = valid_thread_id in self._auto_threads
+                if auto_enabled:
+                    result["params"] = patch_turn_start(params, self.route_callback(params))
+        elif method in {"thread/archive", "thread/delete"} and valid_thread_id:
+            with self._state_lock:
+                self._auto_threads.discard(valid_thread_id)
+        return result
+
+    def observe_server_message(self, message: dict[str, Any]) -> None:
+        """Update thread ownership from correlated responses and lifecycle events."""
+        request_id = message.get("id")
+        with self._state_lock:
+            if request_id in self._pending_auto_starts:
+                self._pending_auto_starts.discard(request_id)
+                result = message.get("result")
+                thread = result.get("thread") if isinstance(result, dict) else None
+                thread_id = thread.get("id") if isinstance(thread, dict) else None
+                if isinstance(thread_id, str) and thread_id:
+                    self._auto_threads.add(thread_id)
+
+            if message.get("method") in {
+                "thread/closed",
+                "thread/archived",
+                "thread/deleted",
+            }:
+                params = message.get("params")
+                thread_id = params.get("threadId") if isinstance(params, dict) else None
+                if isinstance(thread_id, str):
+                    self._auto_threads.discard(thread_id)
 
     def inject_auto_model(self, message: dict[str, Any]) -> dict[str, Any]:
         """Add virtual entry with modalities/efforts derived from current catalog."""
