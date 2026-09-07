@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codex-smart-route"
+version = "0.1.0"
+description = "Automatic main-model and reasoning router for Codex"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+authors = [{name = "Codex Smart Route contributors"}]
+keywords = ["codex", "model-router", "llm-routing", "developer-tools"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["build>=1.2,<2", "mypy>=1.15,<2", "pytest>=8.3,<9", "pytest-cov>=6,<7", "ruff>=0.11,<1"]
+
+[project.scripts]
+smart-route = "codex_smart_route.cli:main"
+
+[project.urls]
+Repository = "https://github.com/AMCarotenuto/codex-smart-route"
+Issues = "https://github.com/AMCarotenuto/codex-smart-route/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["codex_smart_route"]
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers"
+testpaths = ["tests"]
+markers = ["live: opt-in tests that may contact a model provider"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".tmp", ".venv", "docs/protocol-schema", "smart_route"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "S"]
+ignore = ["S101"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["codex_smart_route"]

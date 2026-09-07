@@ -1,0 +1,35 @@
+{
+  "models": [
+    {
+      "model": "local-fast",
+      "display_name": "Example Fast Model",
+      "reasoning_efforts": ["low", "medium"],
+      "input_modalities": ["text"],
+      "supports_tools": true,
+      "supports_parallel_tools": false,
+      "context_window": 64000,
+      "auth_mode": "local",
+      "available": true,
+      "confidence": "reported",
+      "relative_quality": 0.58,
+      "relative_consumption": 0.20,
+      "relative_latency": 0.18
+    },
+    {
+      "model": "local-capable",
+      "display_name": "Example Capable Model",
+      "reasoning_efforts": ["medium", "high", "xhigh"],
+      "input_modalities": ["text", "image"],
+      "supports_tools": true,
+      "supports_parallel_tools": true,
+      "context_window": 256000,
+      "auth_mode": "local",
+      "available": true,
+      "confidence": "reported",
+      "relative_quality": 0.90,
+      "relative_consumption": 0.72,
+      "relative_latency": 0.70
+    }
+  ]
+}
+

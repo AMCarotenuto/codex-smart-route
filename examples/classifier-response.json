@@ -1,0 +1,7 @@
+{
+  "scores": [
+    {"profile_id": "local-fast@medium", "suitability": 0.72, "confidence": 0.81},
+    {"profile_id": "local-capable@high", "suitability": 0.91, "confidence": 0.86}
+  ]
+}
+

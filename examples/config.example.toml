@@ -1,0 +1,51 @@
+version = 1
+enabled = true
+active_policy = "balanced"
+auto_slug = "codex-smart-route"
+adapter = "codex-cli"
+cache_ttl_seconds = 900
+switch_hysteresis = 0.05
+allowed_models = []
+blocked_models = []
+allowed_reasoning = []
+unknown_capabilities = "allow-unverified"
+
+[classifier]
+mode = "disabled"
+timeout_seconds = 4.0
+max_output_bytes = 32768
+
+[logging]
+enabled = true
+redact = true
+
+[experimental]
+app_server = false
+
+[policies.economy]
+minimum_quality = 0.60
+version = "1"
+[policies.economy.weights]
+consumption = 0.65
+quality_gap = 0.20
+latency = 0.10
+switch_cost = 0.05
+
+[policies.balanced]
+minimum_quality = 0.70
+version = "1"
+[policies.balanced.weights]
+consumption = 0.50
+quality_gap = 0.30
+latency = 0.10
+switch_cost = 0.10
+
+[policies.quality]
+minimum_quality = 0.82
+version = "1"
+[policies.quality.weights]
+consumption = 0.15
+quality_gap = 0.65
+latency = 0.10
+switch_cost = 0.10
+

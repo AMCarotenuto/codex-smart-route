@@ -1,0 +1,189 @@
+"""Versioned TOML configuration with no secret fields."""
+
+from __future__ import annotations
+
+import dataclasses
+import os
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+
+class ConfigError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class Weights:
+    consumption: float
+    quality_gap: float
+    latency: float
+    switch_cost: float
+
+    def normalized(self) -> Weights:
+        values = (self.consumption, self.quality_gap, self.latency, self.switch_cost)
+        if any(value < 0 for value in values) or sum(values) <= 0:
+            raise ConfigError("policy weights must be non-negative with a positive total")
+        total = sum(values)
+        return Weights(*(value / total for value in values))
+
+
+@dataclass(frozen=True)
+class PolicyConfig:
+    name: str
+    weights: Weights
+    minimum_quality: float
+    version: str = "1"
+
+
+@dataclass(frozen=True)
+class ClassifierConfig:
+    mode: str = "disabled"
+    model: str | None = None
+    endpoint: str | None = None
+    timeout_seconds: float = 4.0
+    max_output_bytes: int = 32_768
+
+
+@dataclass(frozen=True)
+class RouterConfig:
+    version: int = 1
+    enabled: bool = True
+    active_policy: str = "balanced"
+    auto_slug: str = "codex-smart-route"
+    adapter: str = "codex-cli"
+    cache_ttl_seconds: int = 900
+    switch_hysteresis: float = 0.05
+    allowed_models: frozenset[str] = frozenset()
+    blocked_models: frozenset[str] = frozenset()
+    allowed_reasoning: frozenset[str] = frozenset()
+    fallback_profile: str | None = None
+    unknown_capabilities: str = "allow-unverified"
+    classifier: ClassifierConfig = ClassifierConfig()
+    policies: dict[str, PolicyConfig] = field(default_factory=dict)
+    capability_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
+    log_enabled: bool = True
+    log_redact: bool = True
+    experimental_app_server: bool = False
+
+    @property
+    def policy(self) -> PolicyConfig:
+        try:
+            return self.policies[self.active_policy]
+        except KeyError as exc:
+            raise ConfigError(f"unknown active policy: {self.active_policy}") from exc
+
+
+DEFAULT_POLICIES: dict[str, PolicyConfig] = {
+    "economy": PolicyConfig("economy", Weights(0.65, 0.20, 0.10, 0.05), 0.60),
+    "balanced": PolicyConfig("balanced", Weights(0.50, 0.30, 0.10, 0.10), 0.70),
+    "quality": PolicyConfig("quality", Weights(0.15, 0.65, 0.10, 0.10), 0.82),
+}
+
+
+def default_home() -> Path:
+    override = os.environ.get("CODEX_SMART_ROUTE_HOME")
+    return Path(override) if override else Path.home() / ".codex-smart-route"
+
+
+def default_config_path() -> Path:
+    return default_home() / "config.toml"
+
+
+def _string_set(value: Any, name: str) -> frozenset[str]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ConfigError(f"{name} must be an array of strings")
+    return frozenset(value)
+
+
+def _unit(value: Any, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= float(value) <= 1:
+        raise ConfigError(f"{name} must be between 0 and 1")
+    return float(value)
+
+
+def _policies(raw: dict[str, Any]) -> dict[str, PolicyConfig]:
+    result = dict(DEFAULT_POLICIES)
+    for name, item in raw.items():
+        if not isinstance(item, dict):
+            raise ConfigError(f"policies.{name} must be a table")
+        weights = item.get("weights", {})
+        if not isinstance(weights, dict):
+            raise ConfigError(f"policies.{name}.weights must be a table")
+        result[name] = PolicyConfig(
+            name,
+            Weights(
+                float(weights.get("consumption", 0.5)),
+                float(weights.get("quality_gap", 0.3)),
+                float(weights.get("latency", 0.1)),
+                float(weights.get("switch_cost", 0.1)),
+            ).normalized(),
+            _unit(item.get("minimum_quality", 0.7), f"policies.{name}.minimum_quality"),
+            str(item.get("version", "1")),
+        )
+    return result
+
+
+def parse_config(raw: dict[str, Any]) -> RouterConfig:
+    classifier_raw = raw.get("classifier", {})
+    if not isinstance(classifier_raw, dict):
+        raise ConfigError("classifier must be a table")
+    mode = classifier_raw.get("mode", "disabled")
+    if mode not in {"disabled", "local", "remote"}:
+        raise ConfigError("classifier.mode must be disabled, local, or remote")
+    classifier = ClassifierConfig(
+        mode=mode,
+        model=classifier_raw.get("model"),
+        endpoint=classifier_raw.get("endpoint"),
+        timeout_seconds=float(classifier_raw.get("timeout_seconds", 4.0)),
+        max_output_bytes=int(classifier_raw.get("max_output_bytes", 32_768)),
+    )
+    auto_slug = str(raw.get("auto_slug", "codex-smart-route"))
+    if classifier.model == auto_slug:
+        raise ConfigError("classifier model cannot be the Auto model")
+    unknown = raw.get("unknown_capabilities", "allow-unverified")
+    if unknown not in {"allow-unverified", "exclude-required"}:
+        raise ConfigError("unknown_capabilities has unsupported value")
+    policies = _policies(raw.get("policies", {}))
+    active = str(raw.get("active_policy", "balanced"))
+    if active not in policies:
+        raise ConfigError(f"unknown active policy: {active}")
+    overrides = raw.get("capability_overrides", {})
+    if not isinstance(overrides, dict):
+        raise ConfigError("capability_overrides must be a table")
+    config = RouterConfig(
+        version=int(raw.get("version", 1)),
+        enabled=bool(raw.get("enabled", True)),
+        active_policy=active,
+        auto_slug=auto_slug,
+        adapter=str(raw.get("adapter", "codex-cli")),
+        cache_ttl_seconds=int(raw.get("cache_ttl_seconds", 900)),
+        switch_hysteresis=_unit(raw.get("switch_hysteresis", 0.05), "switch_hysteresis"),
+        allowed_models=_string_set(raw.get("allowed_models", []), "allowed_models"),
+        blocked_models=_string_set(raw.get("blocked_models", []), "blocked_models"),
+        allowed_reasoning=_string_set(raw.get("allowed_reasoning", []), "allowed_reasoning"),
+        fallback_profile=raw.get("fallback_profile"),
+        unknown_capabilities=unknown,
+        classifier=classifier,
+        policies=policies,
+        capability_overrides={str(key): value for key, value in overrides.items()},
+        log_enabled=bool(raw.get("logging", {}).get("enabled", True)),
+        log_redact=bool(raw.get("logging", {}).get("redact", True)),
+        experimental_app_server=bool(raw.get("experimental", {}).get("app_server", False)),
+    )
+    if config.cache_ttl_seconds < 1:
+        raise ConfigError("cache_ttl_seconds must be positive")
+    return config
+
+
+def load_config(path: Path | None = None) -> RouterConfig:
+    target = path or default_config_path()
+    if not target.exists():
+        return parse_config({})
+    with target.open("rb") as handle:
+        return parse_config(tomllib.load(handle))
+
+
+def config_as_dict(config: RouterConfig) -> dict[str, Any]:
+    return dataclasses.asdict(config)
