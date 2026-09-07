@@ -98,11 +98,15 @@ def run_doctor(
         "project_root": str(project_root) if project_root else None,
         "project_id": project_id,
         "models": [],
+        "app_server_protocol": None,
         "warnings": [],
     }
     if discover and report["codex_executable"]:
         try:
-            models = AppServerDiscovery().discover()
+            discovery = AppServerDiscovery()
+            models = discovery.discover()
+            report["app_server_protocol"] = discovery.last_diagnostics.to_dict()
+            report["warnings"].extend(discovery.last_diagnostics.warnings)
             report["models"] = [
                 {
                     "model": model.model,
@@ -112,5 +116,6 @@ def run_doctor(
                 for model in models
             ]
         except DiscoveryError as exc:
+            report["app_server_protocol"] = discovery.last_diagnostics.to_dict()
             report["warnings"].append(str(exc))
     return report

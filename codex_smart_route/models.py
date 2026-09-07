@@ -30,6 +30,8 @@ class ModelCapability:
     source: str = "unknown"
     confidence: Literal["verified", "reported", "unverified"] = "unverified"
     capability_version: str = "unknown"
+    field_evidence: tuple[tuple[str, str, str], ...] = ()
+    provider_capabilities: tuple[tuple[str, bool], ...] = ()
     relative_quality: float | None = None
     relative_consumption: float | None = None
     relative_latency: float | None = None
