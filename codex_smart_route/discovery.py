@@ -102,6 +102,15 @@ def capabilities_from_file(path: Path) -> list[ModelCapability]:
                 relative_quality=_optional_float(row.get("relative_quality")),
                 relative_consumption=_optional_float(row.get("relative_consumption")),
                 relative_latency=_optional_float(row.get("relative_latency")),
+                prior_family=str(row["prior_family"])
+                if row.get("prior_family") is not None
+                else None,
+                prior_strengths=tuple(str(item) for item in row.get("prior_strengths", [])),
+                prior_weaknesses=tuple(str(item) for item in row.get("prior_weaknesses", [])),
+                prior_source=str(row.get("prior_source", "none")),
+                prior_confidence=str(row.get("prior_confidence", "unverified")),  # type: ignore[arg-type]
+                prior_version=str(row.get("prior_version", "none")),
+                tie_break_priority=int(row.get("tie_break_priority", 0)),
             )
         )
     return result
@@ -124,7 +133,7 @@ def apply_overrides(
     allowed = {field.name for field in ModelCapability.__dataclass_fields__.values()}
     result = []
     for model in models:
-        changes = config.capability_overrides.get(model.model, {})
+        changes = dict(config.capability_overrides.get(model.model, {}))
         unknown = set(changes) - allowed
         if unknown:
             raise DiscoveryError(f"unknown capability override fields: {sorted(unknown)}")
@@ -132,6 +141,43 @@ def apply_overrides(
             changes = {**changes, "reasoning_efforts": tuple(changes["reasoning_efforts"])}
         if "input_modalities" in changes:
             changes = {**changes, "input_modalities": tuple(changes["input_modalities"])}
+        if "prior_strengths" in changes:
+            changes = {**changes, "prior_strengths": tuple(changes["prior_strengths"])}
+        if "prior_weaknesses" in changes:
+            changes = {**changes, "prior_weaknesses": tuple(changes["prior_weaknesses"])}
+        if changes.get("prior_confidence") == "verified":
+            raise DiscoveryError("user overrides cannot mark prior data verified")
+        if "prior_confidence" in changes and changes["prior_confidence"] not in {
+            "reported",
+            "unverified",
+        }:
+            raise DiscoveryError("prior_confidence must be reported or unverified")
+        if changes.get("prior_confidence") == "verified":
+            raise DiscoveryError("user overrides cannot mark prior data verified")
+        if "prior_confidence" in changes and changes["prior_confidence"] not in {
+            "reported",
+            "unverified",
+        }:
+            raise DiscoveryError("prior_confidence must be reported or unverified")
+        if changes:
+            override_version = fingerprint(changes)[:12]
+            changes.setdefault(
+                "capability_version", f"{model.capability_version}+override:{override_version}"
+            )
+            if set(changes) & {
+                "relative_quality",
+                "relative_consumption",
+                "relative_latency",
+                "prior_family",
+                "prior_strengths",
+                "prior_weaknesses",
+                "prior_source",
+                "prior_confidence",
+                "tie_break_priority",
+            }:
+                changes.setdefault("prior_version", f"user-override:{override_version}")
+                changes.setdefault("prior_source", "user-config")
+                changes.setdefault("prior_confidence", "reported")
         result.append(replace(model, **changes))
     return result
 

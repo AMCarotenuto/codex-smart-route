@@ -69,7 +69,14 @@ class DecisionCache:
                 return None
             data = json.loads(row[1])
             data["candidates"] = tuple(
-                CandidateScore(**item) for item in data.get("candidates", [])
+                CandidateScore(
+                    **{
+                        **item,
+                        "prior_strengths": tuple(item.get("prior_strengths", [])),
+                        "prior_weaknesses": tuple(item.get("prior_weaknesses", [])),
+                    }
+                )
+                for item in data.get("candidates", [])
             )
             data["excluded"] = {
                 key: tuple(value) for key, value in data.get("excluded", {}).items()

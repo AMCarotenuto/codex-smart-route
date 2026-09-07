@@ -6,7 +6,7 @@ from dataclasses import replace
 
 from .config import RouterConfig
 from .evaluation import local_scores
-from .models import CandidateScore, Decision, ModelProfile, TaskContext, TaskSignals
+from .models import CandidateScore, Decision, ModelProfile, TaskContext, TaskSignals, fingerprint
 
 
 class RoutingError(RuntimeError):
@@ -57,17 +57,35 @@ class Router:
                 + weights.switch_cost * components["switch_cost"]
             )
             verified = (
-                verified_metrics and profile.capability.confidence == "verified" and score[1] >= 0.8
+                verified_metrics
+                and profile.capability.prior_confidence == "verified"
+                and score[1] >= 0.8
             )
+            tie_break_key = fingerprint(profile.id)
             candidates.append(
                 CandidateScore(
-                    profile.id,
-                    score[0],
-                    score[1],
-                    penalty,
-                    components,
-                    (profile.capability.source, signals.source),
-                    verified,
+                    profile_id=profile.id,
+                    suitability=score[0],
+                    confidence=score[1],
+                    penalty=penalty,
+                    components=components,
+                    data_sources=tuple(
+                        dict.fromkeys(
+                            (
+                                profile.capability.source,
+                                profile.capability.prior_source,
+                                signals.source,
+                            )
+                        )
+                    ),
+                    verified=verified,
+                    prior_version=profile.capability.prior_version,
+                    tie_break_priority=profile.capability.tie_break_priority,
+                    tie_break_key=tie_break_key,
+                    prior_family=profile.capability.prior_family,
+                    prior_confidence=profile.capability.prior_confidence,
+                    prior_strengths=profile.capability.prior_strengths,
+                    prior_weaknesses=profile.capability.prior_weaknesses,
                 )
             )
         if task.manual_profile:
@@ -88,7 +106,9 @@ class Router:
                 policy_name=self.config.active_policy,
                 policy_version=self.config.policy.version,
             )
-        candidates.sort(key=lambda item: (item.penalty, item.profile_id))
+        candidates.sort(
+            key=lambda item: (item.penalty, -item.tie_break_priority, item.tie_break_key)
+        )
         winner = candidates[0]
         if (
             task.current_profile
@@ -110,7 +130,10 @@ class Router:
             candidates=tuple(candidates),
             excluded=excluded,
             hard_gates=self._all_gates(excluded),
-            reason="minimum-quality satisfied; lowest normalized weighted penalty",
+            reason=(
+                "minimum-quality satisfied; lowest normalized weighted penalty; "
+                "ties use declared prior priority then stable profile hash"
+            ),
             confidence=winner.confidence,
             verified=winner.verified,
             policy_name=self.config.active_policy,

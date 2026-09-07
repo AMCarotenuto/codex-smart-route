@@ -33,6 +33,13 @@ class ModelCapability:
     relative_quality: float | None = None
     relative_consumption: float | None = None
     relative_latency: float | None = None
+    prior_family: str | None = None
+    prior_strengths: tuple[str, ...] = ()
+    prior_weaknesses: tuple[str, ...] = ()
+    prior_source: str = "none"
+    prior_confidence: Literal["verified", "reported", "unverified"] = "unverified"
+    prior_version: str = "none"
+    tie_break_priority: int = 0
 
     def profiles(self) -> tuple[ModelProfile, ...]:
         return tuple(ModelProfile(self, effort) for effort in self.reasoning_efforts)
@@ -139,6 +146,13 @@ class CandidateScore:
     components: dict[str, float]
     data_sources: tuple[str, ...]
     verified: bool
+    prior_version: str = "none"
+    tie_break_priority: int = 0
+    tie_break_key: str = ""
+    prior_family: str | None = None
+    prior_confidence: Literal["verified", "reported", "unverified"] = "unverified"
+    prior_strengths: tuple[str, ...] = ()
+    prior_weaknesses: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

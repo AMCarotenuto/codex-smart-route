@@ -9,6 +9,7 @@ from .config import RouterConfig, default_home
 from .discovery import apply_overrides, capabilities_from_file
 from .evaluation import RemoteJsonClassifier, evaluate_task
 from .models import Decision, ModelCapability, TaskContext, fingerprint
+from .priors import apply_priors
 from .router import Router
 from .state import DecisionCache
 
@@ -18,7 +19,7 @@ class RoutingService:
         self, config: RouterConfig, catalog: list[ModelCapability], home: Path | None = None
     ):
         self.config = config
-        self.catalog = apply_overrides(catalog, config)
+        self.catalog = apply_overrides(apply_priors(catalog), config)
         self.profiles = tuple(profile for model in self.catalog for profile in model.profiles())
         self.router = Router(config)
         self.home = home or default_home()
@@ -33,7 +34,22 @@ class RoutingService:
         return cls(config, capabilities_from_file(path), home)
 
     def route(self, task: TaskContext, dry_run: bool = False) -> Decision:
-        capability_version = fingerprint([model.capability_version for model in self.catalog])
+        capability_version = fingerprint(
+            [
+                (
+                    model.model,
+                    model.capability_version,
+                    model.prior_version,
+                    model.relative_quality,
+                    model.relative_consumption,
+                    model.relative_latency,
+                    model.tie_break_priority,
+                    model.prior_strengths,
+                    model.prior_weaknesses,
+                )
+                for model in self.catalog
+            ]
+        )
         availability = fingerprint([(model.model, model.available) for model in self.catalog])
         key = DecisionCache.key(
             task, self.config.policy.version, capability_version, availability, "auto"
