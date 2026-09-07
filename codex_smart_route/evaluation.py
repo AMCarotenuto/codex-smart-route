@@ -93,6 +93,8 @@ def local_scores(
         capability = 0.62 * base + 0.38 * effort
         suitability = max(0.0, min(1.0, 0.78 + capability - target))
         confidence = signals.confidence if quality is not None else min(signals.confidence, 0.60)
+        if profile.capability.prior_confidence != "verified":
+            confidence = min(confidence, 0.65)
         result[profile.id] = (suitability, confidence)
     return result
 

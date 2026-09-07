@@ -15,6 +15,7 @@ from .config import ConfigError, config_as_dict, default_config_path, default_ho
 from .discovery import AppServerDiscovery, DiscoveryError, apply_overrides, capabilities_from_file
 from .doctor import run_doctor
 from .models import Decision, TaskContext
+from .priors import apply_priors
 from .service import RoutingService
 from .skill_install import SkillInstallError, install_skill, uninstall_skill
 from .state import RuntimeState
@@ -32,10 +33,12 @@ def _task(args: argparse.Namespace) -> str:
     raise ConfigError("route requires --task or --task-file")
 
 
-def _catalog(args: argparse.Namespace, config: Any) -> list[Any]:
+def _catalog(args: argparse.Namespace, config: Any, *, enrich: bool = True) -> list[Any]:
     if args.catalog:
-        return apply_overrides(capabilities_from_file(args.catalog), config)
-    return apply_overrides(AppServerDiscovery().discover(), config)
+        models = capabilities_from_file(args.catalog)
+    else:
+        models = AppServerDiscovery().discover()
+    return apply_overrides(apply_priors(models), config) if enrich else models
 
 
 def _context(args: argparse.Namespace, state: dict[str, Any]) -> TaskContext:
@@ -146,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             _json(rows)
         elif args.command in {"route", "exec"}:
-            models = _catalog(args, config)
+            models = _catalog(args, config, enrich=False)
             active_policy = state.get("policy", config.active_policy)
             if active_policy in config.policies:
                 config = type(config)(
@@ -202,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print("\n".join(lines))
         elif args.command == "app-server":
-            models = apply_overrides(capabilities_from_file(args.catalog), config)
+            models = capabilities_from_file(args.catalog)
             service = RoutingService(config, models, home)
             tasks: dict[str, str] = {}
 
